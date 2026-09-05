@@ -15,7 +15,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -31,75 +31,41 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f debug.keystore ]; then
-            keytool -genkeypair -v \
-              -keystore debug.keystore \
-              -storepass android \
-              -alias androiddebugkey \
-              -keypass android \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
-          fi
+          keytool -genkeypair -v \
+            -keystore debug.keystore \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
           test -s debug.keystore
 
       - name: Create local.properties
+        shell: bash
         run: |
+          set -euo pipefail
           echo "sdk.dir=/usr/local/lib/android/sdk" > local.properties
           echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> local.properties
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Apply reference-inspired UI polish
-        run: python3 tools/refine_ui.py
+      - name: Check source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s app/src/main/java/com/ghaniram/zoya/MainActivity.kt
+          test -s app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
+          test -s app/src/main/java/com/ghaniram/zoya/AnuSettingsStore.kt
+          echo "Committed Kotlin source verified; no generated source mutation will run in CI."
 
-      - name: Patch Chat builder for current Gemini client
-        run: python3 tools/patch_chat_builder.py
-
-      - name: Apply complete Chat implementation
-        run: python3 tools/complete_chat.py
-
-      - name: Enable real CameraX Vision screen
-        run: python3 tools/enable_real_vision.py
-
-      - name: Route Vision into Anu shared Gemini Live session
-        run: python3 tools/use_shared_live_vision.py
-
-      - name: Repair generated Kotlin imports
-        run: python3 tools/fix_build.py
-
-      - name: Finalize Anu chat and live vision behavior
-        run: python3 tools/finalize_anu.py
-
-      - name: Repair persistent conversation archive and voice turns
-        run: python3 tools/repair_chat_vision.py
-
-      - name: Harden long-running Live microphone session
-        run: python3 tools/repair_long_live.py
-
-      - name: Add Gemini Live session resumption and reconnect recovery
-        run: python3 tools/repair_live_resumption.py
-
-      - name: Normalize generated Kotlin before compile
-        run: python3 tools/repair_compile.py
-
-      - name: Build debug APK with retry
+      - name: Build debug APK
         shell: bash
         run: |
           set -o pipefail
-          for attempt in 1 2 3; do
-            echo "Gradle build attempt $attempt/3"
-            if ./gradlew --no-daemon --stacktrace assembleDebug; then
-              exit 0
-            fi
-            if [ "$attempt" -lt 3 ]; then
-              echo "Build failed; retrying after dependency/network backoff..."
-              sleep $((15 * attempt))
-            fi
-          done
-          exit 1
+          ./gradlew --no-daemon --stacktrace --info clean assembleDebug 2>&1 | tee gradle-build.log
 
       - name: Verify debug APK
         shell: bash
@@ -122,3 +88,12 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anu-gradle-build-log
+          path: gradle-build.log
+          if-no-files-found: ignore
+          retention-days: 7
