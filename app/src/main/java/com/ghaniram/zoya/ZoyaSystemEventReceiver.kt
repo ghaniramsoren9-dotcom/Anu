@@ -23,6 +23,7 @@ class ZoyaSystemEventReceiver : BroadcastReceiver() {
         val event = when (action) {
             Intent.ACTION_POWER_CONNECTED -> if (store.triggerChargerPlugged) "The phone charger was just plugged in." else null
             Intent.ACTION_POWER_DISCONNECTED -> if (store.triggerChargerUnplugged) "The phone charger was just unplugged." else null
+            Intent.ACTION_BATTERY_LOW -> if (store.triggerBatteryLow) "Android reports that the battery is low." else null
             Intent.ACTION_BATTERY_CHANGED -> batteryEvent(store, intent)
             AudioManager.ACTION_HEADSET_PLUG -> headsetEvent(store, intent)
             android.bluetooth.BluetoothDevice.ACTION_ACL_CONNECTED -> if (store.triggerBluetoothConnected) "A Bluetooth device just connected." else null
@@ -38,7 +39,6 @@ class ZoyaSystemEventReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
             try {
-                // Keep proactive behavior quiet if there is no configured model key.
                 if (store.customGeminiKey.isBlank()) return@launch
                 if (ZoyaSessionManager.state.value.connectionState == ConnectionState.DISCONNECTED) {
                     ZoyaSessionManager.connect()
@@ -72,12 +72,10 @@ class ZoyaSystemEventReceiver : BroadcastReceiver() {
         return null
     }
 
-    private fun headsetEvent(store: AnuSettingsStore, intent: Intent): String? {
-        return when (intent.getIntExtra("state", -1)) {
-            1 -> if (store.triggerHeadphonesPlugged) "Headphones were just connected." else null
-            0 -> if (store.triggerHeadphonesUnplugged) "Headphones were just disconnected." else null
-            else -> null
-        }
+    private fun headsetEvent(store: AnuSettingsStore, intent: Intent): String? = when (intent.getIntExtra("state", -1)) {
+        1 -> if (store.triggerHeadphonesPlugged) "Headphones were just connected." else null
+        0 -> if (store.triggerHeadphonesUnplugged) "Headphones were just disconnected." else null
+        else -> null
     }
 
     private fun connectivityEvent(store: AnuSettingsStore, intent: Intent): String? {
