@@ -1,0 +1,8 @@
+{
+  "name": "Anu",
+  "description": "Anu AI Assistant with voice, vision, device controls, and memory",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

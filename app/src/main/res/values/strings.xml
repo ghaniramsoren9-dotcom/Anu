@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Anu</string>
+    <string name="accessibility_service_description">Allows Anu to perform user-requested home, back, recent apps, click, and scroll actions.</string>
+</resources>

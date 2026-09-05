@@ -1,0 +1,2 @@
+Anu floating companion build verification trigger
+Fix: Handler animation scheduling compatibility
