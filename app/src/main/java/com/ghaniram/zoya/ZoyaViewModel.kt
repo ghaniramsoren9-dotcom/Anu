@@ -7,6 +7,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.first
 
 /** UI facade. The session manager owns the Gemini/audio session across Activity recreation. */
 class ZoyaViewModel(application: Application) : AndroidViewModel(application) {
@@ -17,24 +19,47 @@ class ZoyaViewModel(application: Application) : AndroidViewModel(application) {
     fun startVisionSession() = ZoyaSessionManager.startVisionSession()
     fun sendVisionFrame(base64Jpeg: String) = ZoyaSessionManager.sendVisionFrame(base64Jpeg)
     fun disconnect() = ZoyaSessionManager.disconnect()
+
+    /**
+     * A cold app used to send the first message immediately after creating the
+     * WebSocket. Gemini drops realtimeInput until setupComplete. Wait for the
+     * session to reach LISTENING/SPEAKING before delivering the message.
+     */
     fun sendText(text: String) {
         val clean = text.trim()
         if (clean.isBlank()) return
-        val lower = clean.lowercase()
-        val deviceRequest = lower.contains("battery") || lower.contains("ବ୍ୟାଟେରୀ") ||
-            lower.contains("cpu") || lower.contains("gpu") || lower.contains("ram") ||
-            lower.contains("storage") || lower.contains("device information") ||
-            lower.contains("device info") || lower.contains("phone information") ||
-            lower.contains("phone info") || lower.contains("ମୋ ଫୋନ") || lower.contains("phone")
-        if (deviceRequest) {
-            viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val lower = clean.lowercase()
+            val deviceRequest = lower.contains("battery") || lower.contains("ବ୍ୟାଟେରୀ") ||
+                lower.contains("cpu") || lower.contains("gpu") || lower.contains("ram") ||
+                lower.contains("storage") || lower.contains("device information") ||
+                lower.contains("device info") || lower.contains("phone information") ||
+                lower.contains("phone info") || lower.contains("ମୋ ଫୋନ") || lower.contains("phone")
+            if (deviceRequest) {
                 val telemetry = withContext(Dispatchers.IO) { DeviceInfoProvider.snapshot(getApplication()) }
+                ensureSessionReady()
                 ZoyaSessionManager.sendText("$clean\n\n[LOCAL DEVICE TELEMETRY — use these fresh values as ground truth; do not invent or override them]\n$telemetry")
+            } else {
+                ensureSessionReady()
+                ZoyaSessionManager.sendText(clean)
             }
-        } else {
-            ZoyaSessionManager.sendText(clean)
         }
     }
+
+    private suspend fun ensureSessionReady() {
+        val current = state.value.connectionState
+        if (current == ConnectionState.DISCONNECTED) {
+            ZoyaSessionManager.connect()
+        }
+        withTimeoutOrNull(12_000L) {
+            state.first {
+                it.connectionState == ConnectionState.LISTENING ||
+                    it.connectionState == ConnectionState.IDLE ||
+                    it.connectionState == ConnectionState.SPEAKING
+            }
+        }
+    }
+
     fun clearMemories() = ZoyaSessionManager.clearMemories()
     fun clearChatHistory() = ZoyaSessionManager.clearChatHistory()
     fun dismissError() = ZoyaSessionManager.dismissError()
