@@ -10,7 +10,9 @@ import android.view.accessibility.AccessibilityNodeInfo
 /** User-enabled AccessibilityService for explicit global/UI controls and UI understanding. */
 class AccessibilityControlService : AccessibilityService() {
     override fun onServiceConnected() { super.onServiceConnected(); instance = this }
-    override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) = Unit
+    override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) {
+        TouchGuardRuntime.onAccessibilityEvent(this, event)
+    }
     override fun onInterrupt() = Unit
     override fun onDestroy() { if (instance === this) instance = null; super.onDestroy() }
 
