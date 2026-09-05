@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /** Bridges persistent settings changes to the process-wide runtime. */
 class AnuSettingsRuntimeObserver(context: Context) : SharedPreferences.OnSharedPreferenceChangeListener {
@@ -15,7 +18,9 @@ class AnuSettingsRuntimeObserver(context: Context) : SharedPreferences.OnSharedP
 
     init {
         prefs.registerOnSharedPreferenceChangeListener(this)
-        syncWakeWord()
+        CoroutineScope(Dispatchers.Main.immediate).launch {
+            ZoyaSessionManager.state.collect { syncWakeWord() }
+        }
     }
 
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
@@ -29,9 +34,8 @@ class AnuSettingsRuntimeObserver(context: Context) : SharedPreferences.OnSharedP
 
     private fun syncWakeWord() {
         val store = AnuSettingsStore.getInstance(appContext)
-        // A real always-on wake listener is intentionally opt-in. It must never
-        // compete with the active Gemini microphone session.
-        if (store.bringWakeWordBack && store.voiceGuardianOn) wakeWordManager.start()
+        val disconnected = ZoyaSessionManager.state.value.connectionState == ConnectionState.DISCONNECTED
+        if (store.bringWakeWordBack && store.voiceGuardianOn && disconnected) wakeWordManager.start()
         else wakeWordManager.stop()
     }
 }
