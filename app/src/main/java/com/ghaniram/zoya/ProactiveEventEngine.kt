@@ -18,6 +18,7 @@ object ProactiveEventEngine {
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var ambientRunning = false
     @Volatile private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    @Volatile private var networkManager: ConnectivityManager? = null
 
     fun dispatch(context: Context, event: String, key: String = event) {
         if (event.isBlank()) return
@@ -90,12 +91,11 @@ object ProactiveEventEngine {
                     if (store.proactiveAnu && store.triggerWifiLost) dispatch(context, "Network connectivity was lost.", "network:lost")
                 }
             }
-            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-                // Deliberately do not announce every Wi-Fi/cellular capability change.
-            }
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = Unit
         }
         runCatching {
             cm.registerDefaultNetworkCallback(callback)
+            networkManager = cm
             networkCallback = callback
         }
     }
@@ -103,11 +103,10 @@ object ProactiveEventEngine {
     fun stopAmbientScreenAwareness() {
         ambientRunning = false
         handler.removeCallbacksAndMessages(null)
-        networkCallback?.let { callback ->
-            runCatching {
-                val cm = handler.looper.thread.contextClassLoader?.let { null }
-            }
-        }
+        val cm = networkManager
+        val callback = networkCallback
+        if (cm != null && callback != null) runCatching { cm.unregisterNetworkCallback(callback) }
         networkCallback = null
+        networkManager = null
     }
 }
