@@ -21,8 +21,9 @@ android {
         create("debugConfig") {
             storeFile = file("${rootDir}/debug.keystore")
             storePassword = System.getenv("ANU_KEYSTORE_PASSWORD") ?: ""
-            keyAlias = System.getenv("ANU_KEY_ALIAS") ?: ""
-            keyPassword = System.getenv("ANU_KEY_PASSWORD") ?: ""
+            keyAlias = System.getenv("ANU_KEY_ALIAS") ?: "anu"
+            // The key was created with the same password as the keystore.
+            keyPassword = System.getenv("ANU_KEYSTORE_PASSWORD") ?: ""
         }
     }
 
