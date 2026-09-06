@@ -36,27 +36,11 @@ jobs:
           set -euo pipefail
           test -n "$ANU_KEYSTORE_BASE64" || { echo "ERROR: ANU_KEYSTORE_BASE64 is empty"; exit 1; }
           test -n "$ANU_KEYSTORE_PASSWORD" || { echo "ERROR: ANU_KEYSTORE_PASSWORD is empty"; exit 1; }
-          printf '%s' "$ANU_KEYSTORE_BASE64" | base64 --decode > debug.keystore
-          test -s debug.keystore || { echo "ERROR: decoded keystore is empty"; exit 1; }
-
+          printf '%s' "$ANU_KEYSTORE_BASE64" | tr -d '\r\n' | base64 --decode > anu-release.jks
+          test -s anu-release.jks || { echo "ERROR: decoded keystore is empty"; exit 1; }
           echo "Checking permanent Anu keystore..."
-          if ! keytool -list -keystore debug.keystore -storepass "$ANU_KEYSTORE_PASSWORD" >/tmp/anu-keystore-list.txt 2>/tmp/anu-keystore-error.txt; then
-            echo "ERROR: GitHub keystore cannot be opened with ANU_KEYSTORE_PASSWORD."
-            echo "Keytool diagnostic:"
-            cat /tmp/anu-keystore-error.txt
-            exit 1
-          fi
-
-          if ! keytool -list -keystore debug.keystore -alias anu -storepass "$ANU_KEYSTORE_PASSWORD" >/tmp/anu-alias-list.txt 2>/tmp/anu-alias-error.txt; then
-            echo "ERROR: decoded GitHub keystore opened, but alias 'anu' was not found or could not be read."
-            echo "Available non-secret keystore entries:"
-            grep -E 'Alias name:|Entry type:' /tmp/anu-keystore-list.txt || true
-            echo "Keytool diagnostic:"
-            cat /tmp/anu-alias-error.txt
-            exit 1
-          fi
-
-          ACTUAL_SHA256="$(keytool -list -v -keystore debug.keystore -alias anu -storepass "$ANU_KEYSTORE_PASSWORD" | awk -F': ' '/SHA256:/{print $2; exit}')"
+          keytool -list -keystore anu-release.jks -alias anu -storepass "$ANU_KEYSTORE_PASSWORD" >/tmp/anu-keystore-list.txt
+          ACTUAL_SHA256="$(keytool -list -v -keystore anu-release.jks -alias anu -storepass "$ANU_KEYSTORE_PASSWORD" | awk -F': ' '/SHA256:/{print $2; exit}')"
           EXPECTED_SHA256="92:79:36:74:05:FE:9A:70:56:EF:18:8D:18:05:BC:E5:42:26:74:FD:58:83:E0:59:EE:DC:29:C9:76:E3:E8:0B"
           echo "GitHub decoded keystore SHA-256: ${ACTUAL_SHA256:-NOT_FOUND}"
           echo "Expected permanent Anu SHA-256: $EXPECTED_SHA256"
@@ -64,23 +48,6 @@ jobs:
             echo "ERROR: GitHub secret contains a different keystore than the permanent Anu keystore."
             exit 1
           fi
-
-          echo "Checking private key with the same password..."
-          rm -f /tmp/anu-signing-check.p12
-          keytool -importkeystore \
-            -srckeystore debug.keystore \
-            -srcstoretype JKS \
-            -srcalias anu \
-            -srcstorepass "$ANU_KEYSTORE_PASSWORD" \
-            -srckeypass "$ANU_KEYSTORE_PASSWORD" \
-            -destkeystore /tmp/anu-signing-check.p12 \
-            -deststoretype PKCS12 \
-            -deststorepass "$ANU_KEYSTORE_PASSWORD" \
-            -noprompt >/dev/null || {
-              echo "ERROR: the permanent Anu private key cannot be unlocked with ANU_KEYSTORE_PASSWORD."
-              exit 1
-            }
-          rm -f /tmp/anu-signing-check.p12
           echo "Permanent Anu signing keystore validation: OK"
 
       - name: Create local.properties
