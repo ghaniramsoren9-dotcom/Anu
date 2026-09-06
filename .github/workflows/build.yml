@@ -6,8 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  actions: write
+  contents: write
 
 concurrency:
   group: anu-apk-${{ github.ref }}
@@ -82,24 +81,35 @@ jobs:
           "$APKSIGNER" verify --verbose "$APK"
           ls -lh "$APK"
 
-      - name: Upload APK artifact
+      - name: Create GitHub Release and upload APK
         if: ${{ success() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: anu-debug-apk-${{ github.run_number }}
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 14
-          compression-level: 0
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          TAG="anu-build-${{ github.run_number }}"
+          TITLE="Anu APK build ${{ github.run_number }}"
+          gh release create "$TAG" "$APK#Anu-debug.apk" \
+            --repo "${{ github.repository }}" \
+            --title "$TITLE" \
+            --notes "Automated Anu debug APK build from commit ${{ github.sha }}." \
+            --target "${{ github.sha }}"
 
       - name: Upload build log on failure
-        if: ${{ failure() && hashFiles('gradle-build.log') != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: anu-gradle-build-log-${{ github.run_number }}
-          path: gradle-build.log
-          if-no-files-found: ignore
-          overwrite: true
-          retention-days: 7
-          compression-level: 0
+        if: ${{ failure() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -s gradle-build.log ]; then
+            exit 0
+          fi
+          TAG="anu-build-failed-${{ github.run_number }}"
+          gh release create "$TAG" gradle-build.log#gradle-build.log \
+            --repo "${{ github.repository }}" \
+            --title "Anu failed build log ${{ github.run_number }}" \
+            --notes "Automated Gradle build log for failed run ${{ github.run_id }}." \
+            --target "${{ github.sha }}" || true
