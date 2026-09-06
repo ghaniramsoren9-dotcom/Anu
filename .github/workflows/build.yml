@@ -27,25 +27,59 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Restore and validate permanent Anu signing keystore
+      - name: Restore and diagnose permanent Anu signing keystore
         shell: bash
         env:
           ANU_KEYSTORE_BASE64: ${{ secrets.ANU_KEYSTORE_BASE64 }}
           ANU_KEYSTORE_PASSWORD: ${{ secrets.ANU_KEYSTORE_PASSWORD }}
         run: |
-          set -euo pipefail
+          set -u
           test -n "$ANU_KEYSTORE_BASE64" || { echo "ERROR: ANU_KEYSTORE_BASE64 is empty"; exit 1; }
           test -n "$ANU_KEYSTORE_PASSWORD" || { echo "ERROR: ANU_KEYSTORE_PASSWORD is empty"; exit 1; }
-          printf '%s' "$ANU_KEYSTORE_BASE64" | tr -d '\r\n' | base64 --decode > anu-release.jks
-          test -s anu-release.jks || { echo "ERROR: decoded keystore is empty"; exit 1; }
-          echo "Checking permanent Anu keystore..."
-          keytool -list -keystore anu-release.jks -alias anu -storepass "$ANU_KEYSTORE_PASSWORD" >/tmp/anu-keystore-list.txt
-          ACTUAL_SHA256="$(keytool -list -v -keystore anu-release.jks -alias anu -storepass "$ANU_KEYSTORE_PASSWORD" | awk -F': ' '/SHA256:/{print $2; exit}')"
+          printf '%s' "$ANU_KEYSTORE_BASE64" | tr -d '\r\n' | base64 --decode > anu-release.jks 2>/tmp/anu-base64.err
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "ERROR: Base64 decode failed (exit $rc)."
+            cat /tmp/anu-base64.err
+            exit 1
+          fi
+          size=$(wc -c < anu-release.jks)
+          echo "Decoded keystore size: $size bytes"
+          test "$size" -gt 0 || { echo "ERROR: decoded keystore is empty"; exit 1; }
+          echo "Keystore file type:"
+          file anu-release.jks || true
+          echo "Attempting keystore discovery without printing secrets..."
+          set +e
+          keytool -list -keystore anu-release.jks -storepass "$ANU_KEYSTORE_PASSWORD" >/tmp/anu-keytool.out 2>/tmp/anu-keytool.err
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "KEYTOOL_EXIT=$rc"
+            echo "KEYTOOL_ERROR_BEGIN"
+            sed -E 's/(password|storepass|keypass)[^:]*:.*/\1: [REDACTED]/Ig' /tmp/anu-keytool.err | head -20
+            echo "KEYTOOL_ERROR_END"
+            echo "Trying supported keystore types..."
+            for type in JKS PKCS12; do
+              set +e
+              keytool -list -storetype "$type" -keystore anu-release.jks -storepass "$ANU_KEYSTORE_PASSWORD" >/dev/null 2>/tmp/anu-${type}.err
+              trc=$?
+              set -e
+              echo "$type exit=$trc"
+            done
+            exit 1
+          fi
+          echo "Keystore opened successfully."
+          if ! keytool -list -keystore anu-release.jks -alias anu -storepass "$ANU_KEYSTORE_PASSWORD" >/tmp/anu-alias.out 2>/tmp/anu-alias.err; then
+            echo "ERROR: keystore opens, but alias 'anu' is unavailable."
+            sed -E 's/(password|storepass|keypass)[^:]*:.*/\1: [REDACTED]/Ig' /tmp/anu-alias.err | head -20
+            exit 1
+          fi
+          ACTUAL_SHA256="$(keytool -list -v -keystore anu-release.jks -alias anu -storepass "$ANU_KEYSTORE_PASSWORD" 2>/dev/null | awk -F': ' '/SHA256:/{print $2; exit}')"
           EXPECTED_SHA256="92:79:36:74:05:FE:9A:70:56:EF:18:8D:18:05:BC:E5:42:26:74:FD:58:83:E0:59:EE:DC:29:C9:76:E3:E8:0B"
           echo "GitHub decoded keystore SHA-256: ${ACTUAL_SHA256:-NOT_FOUND}"
           echo "Expected permanent Anu SHA-256: $EXPECTED_SHA256"
           if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
-            echo "ERROR: GitHub secret contains a different keystore than the permanent Anu keystore."
+            echo "ERROR: fingerprint mismatch. The GitHub secret contains a different keystore."
             exit 1
           fi
           echo "Permanent Anu signing keystore validation: OK"
@@ -85,10 +119,7 @@ jobs:
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print -quit)"
-          if [ -z "$APKSIGNER" ]; then
-            echo "ERROR: Android build-tools apksigner not found under $ANDROID_HOME/build-tools"
-            exit 1
-          fi
+          test -n "$APKSIGNER" || { echo "ERROR: apksigner not found"; exit 1; }
           "$APKSIGNER" verify --verbose "$APK"
           ls -lh "$APK"
 
@@ -101,26 +132,4 @@ jobs:
           set -euo pipefail
           APK="app/build/outputs/apk/debug/app-debug.apk"
           TAG="anu-build-${{ github.run_number }}"
-          TITLE="Anu APK build ${{ github.run_number }}"
-          gh release create "$TAG" "$APK#Anu-debug.apk" \
-            --repo "${{ github.repository }}" \
-            --title "$TITLE" \
-            --notes "Automated Anu debug APK build from commit ${{ github.sha }}." \
-            --target "${{ github.sha }}"
-
-      - name: Upload build log on failure
-        if: ${{ failure() }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ ! -s gradle-build.log ]; then
-            exit 0
-          fi
-          TAG="anu-build-failed-${{ github.run_number }}"
-          gh release create "$TAG" gradle-build.log#gradle-build.log \
-            --repo "${{ github.repository }}" \
-            --title "Anu failed build log ${{ github.run_number }}" \
-            --notes "Automated Gradle build log for failed run ${{ github.run_id }}." \
-            --target "${{ github.sha }}" || true
+          gh release create "$TAG" "$APK#Anu-debug.apk" --repo "${{ github.repository }}" --title "Anu APK build ${{ github.run_number }}" --notes "Automated Anu debug APK build from commit ${{ github.sha }}." --target "${{ github.sha }}"
