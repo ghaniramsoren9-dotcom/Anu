@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -35,7 +36,26 @@ class AnuSettingsRuntimeObserver(context: Context) : SharedPreferences.OnSharedP
     private fun syncWakeWord() {
         val store = AnuSettingsStore.getInstance(appContext)
         val disconnected = ZoyaSessionManager.state.value.connectionState == ConnectionState.DISCONNECTED
-        if (store.bringWakeWordBack && store.voiceGuardianOn && disconnected) wakeWordManager.start()
-        else wakeWordManager.stop()
+        // Wake Word is its own feature. Voice Guardian may protect the mic, but it
+        // must not be a prerequisite for wake-word detection.
+        if (store.bringWakeWordBack && disconnected) {
+            ensureWakeForegroundService()
+            wakeWordManager.start()
+        } else {
+            wakeWordManager.stop()
+        }
+    }
+
+    private fun ensureWakeForegroundService() {
+        runCatching {
+            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE ||
+                ContextCompat.checkSelfPermission(appContext, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                ContextCompat.startForegroundService(
+                    appContext,
+                    android.content.Intent(appContext, ZoyaForegroundService::class.java).setAction(ZoyaForegroundService.ACTION_WAKE_WORD)
+                )
+            }
+        }
     }
 }
