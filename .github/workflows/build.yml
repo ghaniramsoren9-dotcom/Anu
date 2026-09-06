@@ -61,7 +61,7 @@ jobs:
           fi
 
           ACTUAL_SHA256="$(printf '%s\n' "$KEYTOOL_OUTPUT" | awk -F': ' '/SHA256:/{print $2; exit}')"
-          EXPECTED_SHA256="PASTE_NEW_SHA256_HERE"
+          EXPECTED_SHA256="87:7D:C9:7A:8B:30:9D:53:24:F0:F9:62:BF:0C:DE:81:0E:47:8A:32:72:53:B2:AC:33:7A:48:4C:DB:01:78:90"
           echo "GitHub decoded keystore SHA-256: ${ACTUAL_SHA256:-NOT_FOUND}"
           echo "Expected permanent Anu SHA-256: $EXPECTED_SHA256"
 
