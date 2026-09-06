@@ -32,40 +32,36 @@ jobs:
         env:
           ANU_KEYSTORE_BASE64: ${{ secrets.ANU_KEYSTORE_BASE64 }}
           ANU_KEYSTORE_PASSWORD: ${{ secrets.ANU_KEYSTORE_PASSWORD }}
-          ANU_KEY_ALIAS: ${{ secrets.ANU_KEY_ALIAS }}
-          ANU_KEY_PASSWORD: ${{ secrets.ANU_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           test -n "$ANU_KEYSTORE_BASE64" || { echo "ERROR: ANU_KEYSTORE_BASE64 is empty"; exit 1; }
           test -n "$ANU_KEYSTORE_PASSWORD" || { echo "ERROR: ANU_KEYSTORE_PASSWORD is empty"; exit 1; }
-          test -n "$ANU_KEY_ALIAS" || { echo "ERROR: ANU_KEY_ALIAS is empty"; exit 1; }
-          test -n "$ANU_KEY_PASSWORD" || { echo "ERROR: ANU_KEY_PASSWORD is empty"; exit 1; }
           printf '%s' "$ANU_KEYSTORE_BASE64" | base64 --decode > debug.keystore
           test -s debug.keystore || { echo "ERROR: decoded keystore is empty"; exit 1; }
 
-          echo "Checking keystore type and alias..."
-          keytool -list -keystore debug.keystore -alias "$ANU_KEY_ALIAS" -storepass "$ANU_KEYSTORE_PASSWORD" >/dev/null || {
-            echo "ERROR: keystore store password or alias is invalid."
+          echo "Checking permanent Anu keystore and alias..."
+          keytool -list -keystore debug.keystore -alias anu -storepass "$ANU_KEYSTORE_PASSWORD" >/dev/null || {
+            echo "ERROR: GitHub keystore/password does not match the permanent Anu keystore (alias: anu)."
             exit 1
           }
 
-          echo "Checking private-key password..."
+          echo "Checking private key with the same password..."
           rm -f /tmp/anu-signing-check.p12
           keytool -importkeystore \
             -srckeystore debug.keystore \
             -srcstoretype JKS \
-            -srcalias "$ANU_KEY_ALIAS" \
+            -srcalias anu \
             -srcstorepass "$ANU_KEYSTORE_PASSWORD" \
-            -srckeypass "$ANU_KEY_PASSWORD" \
+            -srckeypass "$ANU_KEYSTORE_PASSWORD" \
             -destkeystore /tmp/anu-signing-check.p12 \
             -deststoretype PKCS12 \
             -deststorepass "$ANU_KEYSTORE_PASSWORD" \
             -noprompt >/dev/null || {
-              echo "ERROR: private-key password does not unlock the key, or the alias is not a PrivateKeyEntry."
+              echo "ERROR: the permanent Anu private key cannot be unlocked with ANU_KEYSTORE_PASSWORD."
               exit 1
             }
           rm -f /tmp/anu-signing-check.p12
-          echo "Keystore + alias + private-key password validation: OK"
+          echo "Permanent Anu signing keystore validation: OK"
 
       - name: Create local.properties
         shell: bash
@@ -90,13 +86,9 @@ jobs:
         shell: bash
         env:
           ANU_KEYSTORE_PASSWORD: ${{ secrets.ANU_KEYSTORE_PASSWORD }}
-          ANU_KEY_ALIAS: ${{ secrets.ANU_KEY_ALIAS }}
-          ANU_KEY_PASSWORD: ${{ secrets.ANU_KEY_PASSWORD }}
         run: |
           set -o pipefail
           test -n "$ANU_KEYSTORE_PASSWORD"
-          test -n "$ANU_KEY_ALIAS"
-          test -n "$ANU_KEY_PASSWORD"
           ./gradlew --no-daemon --stacktrace --info clean assembleDebug 2>&1 | tee gradle-build.log
 
       - name: Verify debug APK
