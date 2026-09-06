@@ -69,7 +69,9 @@ class ZoyaForegroundService : Service() {
             runCatching { startForeground(NOTIFICATION_ID, notification) }
         }
         ZoyaSessionManager.initialize(application)
-        if (intent?.action == ACTION_START || intent == null) ZoyaSessionManager.restoreIfNeeded()
+        if (intent?.action == ACTION_START || intent?.action == ACTION_WAKE_WORD || intent == null) {
+            ZoyaSessionManager.restoreIfNeeded()
+        }
         return START_STICKY
     }
 
@@ -88,6 +90,7 @@ class ZoyaForegroundService : Service() {
     companion object {
         const val ACTION_START = "com.ghaniram.zoya.START_VOICE"
         const val ACTION_STOP = "com.ghaniram.zoya.STOP_VOICE"
+        const val ACTION_WAKE_WORD = "com.ghaniram.zoya.START_WAKE_WORD"
         private const val CHANNEL_ID = "zoya_voice"
         private const val NOTIFICATION_ID = 4001
     }
