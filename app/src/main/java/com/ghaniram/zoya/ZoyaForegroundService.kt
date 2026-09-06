@@ -19,6 +19,7 @@ class ZoyaForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            ProactiveEventEngine.stopAmbientScreenAwareness()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
@@ -34,7 +35,7 @@ class ZoyaForegroundService : Service() {
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("Anu is Active")
-            .setContentText("Voice conversation continues in the background")
+            .setContentText("Voice conversation and proactive assistance continue in the background")
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
@@ -55,12 +56,7 @@ class ZoyaForegroundService : Service() {
                         android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                     )
                 } else {
-                    androidx.core.app.ServiceCompat.startForeground(
-                        this,
-                        NOTIFICATION_ID,
-                        notification,
-                        0
-                    )
+                    androidx.core.app.ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, 0)
                 }
             } else {
                 startForeground(NOTIFICATION_ID, notification)
@@ -68,7 +64,9 @@ class ZoyaForegroundService : Service() {
         }.onFailure {
             runCatching { startForeground(NOTIFICATION_ID, notification) }
         }
+
         ZoyaSessionManager.initialize(application)
+        ProactiveEventEngine.startAmbientScreenAwareness(application)
         if (intent?.action == ACTION_START || intent?.action == ACTION_WAKE_WORD || intent == null) {
             ZoyaSessionManager.restoreIfNeeded()
         }
@@ -78,11 +76,16 @@ class ZoyaForegroundService : Service() {
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(CHANNEL_ID, "Anu voice assistant", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "Keeps an active Anu voice conversation running in the background."
+                description = "Keeps an active Anu voice conversation and proactive assistance running in the background."
                 setShowBadge(false)
             }
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
+    }
+
+    override fun onDestroy() {
+        ProactiveEventEngine.stopAmbientScreenAwareness()
+        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
