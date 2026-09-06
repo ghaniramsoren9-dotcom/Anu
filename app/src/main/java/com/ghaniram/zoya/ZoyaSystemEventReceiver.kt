@@ -5,13 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
 import android.os.BatteryManager
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 
 /** Converts supported Android broadcasts into real Anu proactive responses. */
 class ZoyaSystemEventReceiver : BroadcastReceiver() {
@@ -36,28 +29,10 @@ class ZoyaSystemEventReceiver : BroadcastReceiver() {
             else -> null
         } ?: return
 
-        val pending = goAsync()
-        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
-            try {
-                if (store.customGeminiKey.isBlank()) return@launch
-                if (ZoyaSessionManager.state.value.connectionState == ConnectionState.DISCONNECTED) {
-                    ZoyaSessionManager.connect()
-                    withTimeoutOrNull(12_000L) {
-                        ZoyaSessionManager.state.first {
-                            it.connectionState == ConnectionState.LISTENING ||
-                                it.connectionState == ConnectionState.IDLE ||
-                                it.connectionState == ConnectionState.SPEAKING
-                        }
-                    }
-                }
-                delay(150L)
-                ZoyaSessionManager.sendText(
-                    "[PROACTIVE SYSTEM EVENT] $event Respond to the user proactively in one short, natural sentence. Do not claim to have performed any action; this is only an event notification."
-                )
-            } finally {
-                pending.finish()
-            }
-        }
+        // Do not wait for Gemini setup inside BroadcastReceiver/goAsync. The shared
+        // Live client queues outbound messages until setupComplete, so the event is
+        // safe to dispatch immediately and survives a slow WebSocket handshake.
+        ProactiveEventEngine.dispatch(context, event, "$action:${intent.data?.schemeSpecificPart ?: ""}")
     }
 
     private fun batteryEvent(store: AnuSettingsStore, intent: Intent): String? {
