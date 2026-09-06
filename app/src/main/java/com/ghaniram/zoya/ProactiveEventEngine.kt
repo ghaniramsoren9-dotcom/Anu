@@ -1,22 +1,23 @@
 package com.ghaniram.zoya
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-/**
- * Single runtime bridge for Android system events and ambient screen awareness -> Anu Live.
- * No second Gemini client is created; everything enters the existing Anu session.
- */
+/** Single runtime bridge for Android events and ambient screen awareness -> Anu Live. */
 object ProactiveEventEngine {
     private const val DEBOUNCE_MS = 2_000L
     private const val SCREEN_CHECK_MS = 30_000L
     private val lastDispatch = ConcurrentHashMap<String, AtomicLong>()
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var ambientRunning = false
+    @Volatile private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     fun dispatch(context: Context, event: String, key: String = event) {
         if (event.isBlank()) return
@@ -37,14 +38,11 @@ object ProactiveEventEngine {
         )
     }
 
-    /**
-     * Periodically gives Anu the current Accessibility UI snapshot so it can notice
-     * useful things on screen even when the user is not speaking.
-     */
     fun startAmbientScreenAwareness(context: Context) {
         val app = context.applicationContext
         if (ambientRunning) return
         ambientRunning = true
+        startNetworkMonitor(app)
         val tick = object : Runnable {
             override fun run() {
                 if (!ambientRunning) return
@@ -71,8 +69,45 @@ object ProactiveEventEngine {
         handler.post(tick)
     }
 
+    private fun startNetworkMonitor(context: Context) {
+        if (networkCallback != null) return
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            private var hasNetwork = false
+            override fun onAvailable(network: Network) {
+                if (!hasNetwork) {
+                    hasNetwork = true
+                    runCatching {
+                        val store = AnuSettingsStore.getInstance(context)
+                        if (store.proactiveAnu && store.triggerWifiConnected) dispatch(context, "Network connectivity was restored.", "network:available")
+                    }
+                }
+            }
+            override fun onLost(network: Network) {
+                hasNetwork = false
+                runCatching {
+                    val store = AnuSettingsStore.getInstance(context)
+                    if (store.proactiveAnu && store.triggerWifiLost) dispatch(context, "Network connectivity was lost.", "network:lost")
+                }
+            }
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                // Deliberately do not announce every Wi-Fi/cellular capability change.
+            }
+        }
+        runCatching {
+            cm.registerDefaultNetworkCallback(callback)
+            networkCallback = callback
+        }
+    }
+
     fun stopAmbientScreenAwareness() {
         ambientRunning = false
         handler.removeCallbacksAndMessages(null)
+        networkCallback?.let { callback ->
+            runCatching {
+                val cm = handler.looper.thread.contextClassLoader?.let { null }
+            }
+        }
+        networkCallback = null
     }
 }
