@@ -27,19 +27,14 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Prepare debug keystore
+      - name: Restore permanent Anu signing keystore
         shell: bash
+        env:
+          ANU_KEYSTORE_BASE64: ${{ secrets.ANU_KEYSTORE_BASE64 }}
         run: |
           set -euo pipefail
-          keytool -genkeypair -v \
-            -keystore debug.keystore \
-            -storepass android \
-            -alias androiddebugkey \
-            -keypass android \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
+          test -n "$ANU_KEYSTORE_BASE64"
+          printf '%s' "$ANU_KEYSTORE_BASE64" | base64 --decode > debug.keystore
           test -s debug.keystore
 
       - name: Create local.properties
@@ -63,8 +58,15 @@ jobs:
 
       - name: Build debug APK
         shell: bash
+        env:
+          ANU_KEYSTORE_PASSWORD: ${{ secrets.ANU_KEYSTORE_PASSWORD }}
+          ANU_KEY_ALIAS: ${{ secrets.ANU_KEY_ALIAS }}
+          ANU_KEY_PASSWORD: ${{ secrets.ANU_KEY_PASSWORD }}
         run: |
           set -o pipefail
+          test -n "$ANU_KEYSTORE_PASSWORD"
+          test -n "$ANU_KEY_ALIAS"
+          test -n "$ANU_KEY_PASSWORD"
           ./gradlew --no-daemon --stacktrace --info clean assembleDebug 2>&1 | tee gradle-build.log
 
       - name: Verify debug APK
