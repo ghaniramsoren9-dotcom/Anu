@@ -13,16 +13,16 @@ android {
         applicationId = "com.ghaniram.zoya"
         minSdk = 26
         targetSdk = 34
-        versionCode = 11
-        versionName = "1.7.1"
+        versionCode = 12
+        versionName = "1.7.2"
     }
 
     signingConfigs {
         create("debugConfig") {
             storeFile = file("${rootDir}/debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+            storePassword = System.getenv("ANU_KEYSTORE_PASSWORD") ?: ""
+            keyAlias = System.getenv("ANU_KEY_ALIAS") ?: ""
+            keyPassword = System.getenv("ANU_KEY_PASSWORD") ?: ""
         }
     }
 
