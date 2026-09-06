@@ -37,6 +37,7 @@ jobs:
           test -n "$ANU_KEYSTORE_BASE64" || { echo "ERROR: ANU_KEYSTORE_BASE64 is empty"; exit 1; }
           test -n "$ANU_KEYSTORE_PASSWORD" || { echo "ERROR: ANU_KEYSTORE_PASSWORD is empty"; exit 1; }
 
+          # Normalize accidental CR/LF characters introduced while creating the secret.
           STORE_PASSWORD="$(printf '%s' "$ANU_KEYSTORE_PASSWORD" | tr -d '\r\n')"
           test -n "$STORE_PASSWORD" || { echo "ERROR: normalized keystore password is empty"; exit 1; }
 
@@ -71,6 +72,9 @@ jobs:
           fi
 
           echo "Permanent Anu signing keystore validation: OK"
+
+          cp anu-release.jks "$GITHUB_WORKSPACE/debug.keystore"
+          echo "Copied keystore to $GITHUB_WORKSPACE/debug.keystore"
 
       - name: Create local.properties
         shell: bash
@@ -107,6 +111,21 @@ jobs:
           set -euo pipefail
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print -quit)"
+          test -n "$APKSIGNER" || { echo "ERROR: apksigner not found"; exit 1; }
+          "$APKSIGNER" verify --verbose "$APK"
+          ls -lh "$APK"
+
+      - name: Create GitHub Release and upload APK
+        if: ${{ success() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          TAG="anu-build-${{ github.run_number }}"
+          gh release create "$TAG" "$APK#Anu-debug.apk" --repo "${{ github.repository }}" --title "Anu APK build ${{ github.run_number }}" --notes "Automated Anu debug APK build from commit ${{ github.sha }}." --target "${{ github.sha }}"          test -s "$APK"
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print -quit)"
           test -n "$APKSIGNER" || { echo "ERROR: apksigner not found"; exit 1; }
           "$APKSIGNER" verify --verbose "$APK"
