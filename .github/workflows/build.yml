@@ -37,7 +37,6 @@ jobs:
           test -n "$ANU_KEYSTORE_BASE64" || { echo "ERROR: ANU_KEYSTORE_BASE64 is empty"; exit 1; }
           test -n "$ANU_KEYSTORE_PASSWORD" || { echo "ERROR: ANU_KEYSTORE_PASSWORD is empty"; exit 1; }
 
-          # Normalize accidental CR/LF characters introduced while creating the secret.
           STORE_PASSWORD="$(printf '%s' "$ANU_KEYSTORE_PASSWORD" | tr -d '\r\n')"
           test -n "$STORE_PASSWORD" || { echo "ERROR: normalized keystore password is empty"; exit 1; }
 
@@ -62,7 +61,7 @@ jobs:
           fi
 
           ACTUAL_SHA256="$(printf '%s\n' "$KEYTOOL_OUTPUT" | awk -F': ' '/SHA256:/{print $2; exit}')"
-          EXPECTED_SHA256="92:79:36:74:05:FE:9A:70:56:EF:18:8D:18:05:BC:E5:42:26:74:FD:58:83:E0:59:EE:DC:29:C9:76:E3:E8:0B"
+          EXPECTED_SHA256="PASTE_NEW_SHA256_HERE"
           echo "GitHub decoded keystore SHA-256: ${ACTUAL_SHA256:-NOT_FOUND}"
           echo "Expected permanent Anu SHA-256: $EXPECTED_SHA256"
 
