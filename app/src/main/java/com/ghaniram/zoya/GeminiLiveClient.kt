@@ -10,6 +10,7 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.ArrayDeque
 import java.util.concurrent.TimeUnit
 
 /** Direct Gemini Live API WebSocket client. */
@@ -34,6 +35,7 @@ class GeminiLiveClient(
     private var webSocket: WebSocket? = null
     private var setupComplete = false
     private var terminalErrorSent = false
+    private val pendingMessages = ArrayDeque<String>()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val setupTimeout = Runnable {
         if (!setupComplete && webSocket != null) {
@@ -56,6 +58,7 @@ class GeminiLiveClient(
         }
         setupComplete = false
         terminalErrorSent = false
+        pendingMessages.clear()
         val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$apiKey"
         webSocket = client.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: Response) {
@@ -72,9 +75,7 @@ class GeminiLiveClient(
                     put("outputAudioTranscription", JSONObject())
                     put("inputAudioTranscription", JSONObject())
                     put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemInstruction + " For current India time or the user's current device location, call getDeviceInfo and use its India time/location fields as ground truth. For a request to call a named contact, use accessibilityAction with action=call_contact and text equal to the contact name; do not open the Dialer or merely tell the user to call manually. Execute the tool before claiming the call was placed."))))
-                    if (tools.length() > 0) {
-                        put("tools", JSONArray().put(JSONObject().put("functionDeclarations", tools)))
-                    }
+                    if (tools.length() > 0) put("tools", JSONArray().put(JSONObject().put("functionDeclarations", tools)))
                 }
                 if (!ws.send(JSONObject().put("setup", setupConfig).toString())) {
                     fail("Could not send Gemini Live setup message.")
@@ -83,26 +84,10 @@ class GeminiLiveClient(
                 mainHandler.removeCallbacks(setupTimeout)
                 mainHandler.postDelayed(setupTimeout, 15_000L)
             }
-
             override fun onMessage(ws: WebSocket, text: String) { handleServerMessage(text) }
-
-            override fun onMessage(ws: WebSocket, bytes: ByteString) {
-                val text = bytes.utf8()
-                if (text.trimStart().startsWith("{")) handleServerMessage(text)
-            }
-
-            override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
-                mainHandler.removeCallbacks(setupTimeout)
-                val http = response?.let { " HTTP ${it.code}" } ?: ""
-                fail("Gemini Live WebSocket failed$http: ${t.message ?: "unknown network error"}")
-            }
-
-            override fun onClosed(ws: WebSocket, code: Int, reason: String) {
-                mainHandler.removeCallbacks(setupTimeout)
-                setupComplete = false
-                if (webSocket === ws) webSocket = null
-                callbacks.onDisconnected()
-            }
+            override fun onMessage(ws: WebSocket, bytes: ByteString) { val text = bytes.utf8(); if (text.trimStart().startsWith("{")) handleServerMessage(text) }
+            override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) { mainHandler.removeCallbacks(setupTimeout); val http = response?.let { " HTTP ${it.code}" } ?: ""; fail("Gemini Live WebSocket failed$http: ${t.message ?: "unknown network error"}") }
+            override fun onClosed(ws: WebSocket, code: Int, reason: String) { mainHandler.removeCallbacks(setupTimeout); setupComplete = false; if (webSocket === ws) webSocket = null; callbacks.onDisconnected() }
         })
     }
 
@@ -113,6 +98,7 @@ class GeminiLiveClient(
             setupComplete = true
             terminalErrorSent = false
             callbacks.onConnected()
+            flushPendingMessages()
             return
         }
         json.optJSONObject("error")?.let { error ->
@@ -147,6 +133,7 @@ class GeminiLiveClient(
         if (terminalErrorSent) return
         terminalErrorSent = true
         setupComplete = false
+        pendingMessages.clear()
         mainHandler.removeCallbacks(setupTimeout)
         callbacks.onError(message)
         webSocket?.cancel()
@@ -154,57 +141,52 @@ class GeminiLiveClient(
         callbacks.onDisconnected()
     }
 
+    private fun enqueueOrSend(message: String) {
+        if (message.isBlank()) return
+        if (!setupComplete) {
+            if (pendingMessages.size < 64) pendingMessages.addLast(message)
+            return
+        }
+        webSocket?.send(message)
+    }
+
+    private fun flushPendingMessages() {
+        while (setupComplete && pendingMessages.isNotEmpty()) {
+            webSocket?.send(pendingMessages.removeFirst())
+        }
+    }
+
     fun sendAudioChunk(base64Pcm: String) {
-        if (!setupComplete) return
-        webSocket?.send(JSONObject().put("realtimeInput", JSONObject().put("audio", JSONObject().apply {
-            put("data", base64Pcm)
-            put("mimeType", "audio/pcm;rate=16000")
+        if (base64Pcm.isBlank()) return
+        enqueueOrSend(JSONObject().put("realtimeInput", JSONObject().put("audio", JSONObject().apply {
+            put("data", base64Pcm); put("mimeType", "audio/pcm;rate=16000")
         })).toString())
     }
 
     /** Sends a live camera frame. Gemini Live accepts JPEG/PNG frames at up to 1 FPS. */
     fun sendVideoFrame(base64Jpeg: String) {
-        if (!setupComplete || base64Jpeg.isBlank()) return
-        webSocket?.send(JSONObject().put("realtimeInput", JSONObject().put("video", JSONObject().apply {
-            put("data", base64Jpeg)
-            put("mimeType", "image/jpeg")
+        if (base64Jpeg.isBlank()) return
+        enqueueOrSend(JSONObject().put("realtimeInput", JSONObject().put("video", JSONObject().apply {
+            put("data", base64Jpeg); put("mimeType", "image/jpeg")
         })).toString())
     }
 
     fun sendText(text: String) {
-        if (!setupComplete || text.isBlank()) return
-        webSocket?.send(JSONObject().put("realtimeInput", JSONObject().put("text", text)).toString())
+        if (text.isBlank()) return
+        enqueueOrSend(JSONObject().put("realtimeInput", JSONObject().put("text", text)).toString())
     }
 
-    /** Runs a deterministic one-shot Vision request with the captured camera image and prompt in one atomic payload. */
+    /** Compatibility helper; new Vision flows should use sendVideoFrame + sendText on the Live session. */
     fun sendVisionImage(base64Jpeg: String, prompt: String) {
-        if (!setupComplete || base64Jpeg.isBlank()) return
-        val imageBytes = try {
-            android.util.Base64.decode(base64Jpeg, android.util.Base64.DEFAULT)
-        } catch (_: Exception) {
-            callbacks.onError("Invalid camera image data.")
-            callbacks.onTurnComplete()
-            return
-        }
-        GeminiVisionClient(apiKey).analyze(imageBytes, prompt, object : GeminiVisionClient.Callback {
-            override fun onSuccess(text: String) {
-                callbacks.onModelText(text)
-                callbacks.onTurnComplete()
-            }
-
-            override fun onError(message: String) {
-                callbacks.onError(message)
-                callbacks.onTurnComplete()
-            }
-        })
+        if (base64Jpeg.isBlank()) return
+        sendVideoFrame(base64Jpeg)
+        sendText(prompt)
     }
 
     fun sendToolResponse(name: String, id: String, output: String) {
-        if (!setupComplete) return
-        webSocket?.send(JSONObject().put("toolResponse", JSONObject().put("functionResponses", JSONArray().put(JSONObject().apply {
-            put("name", name)
-            put("id", id)
-            put("response", JSONObject().put("result", output))
+        if (name.isBlank() || id.isBlank()) return
+        enqueueOrSend(JSONObject().put("toolResponse", JSONObject().put("functionResponses", JSONArray().put(JSONObject().apply {
+            put("name", name); put("id", id); put("response", JSONObject().put("result", output))
         }))).toString())
     }
 
@@ -212,6 +194,7 @@ class GeminiLiveClient(
         mainHandler.removeCallbacks(setupTimeout)
         setupComplete = false
         terminalErrorSent = false
+        pendingMessages.clear()
         webSocket?.close(1000, "Client closed")
         webSocket = null
     }
@@ -219,6 +202,7 @@ class GeminiLiveClient(
     private fun disconnectSilently() {
         mainHandler.removeCallbacks(setupTimeout)
         setupComplete = false
+        pendingMessages.clear()
         webSocket?.cancel()
         webSocket = null
     }
