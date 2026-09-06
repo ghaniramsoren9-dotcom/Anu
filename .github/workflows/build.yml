@@ -27,61 +27,50 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Restore and diagnose permanent Anu signing keystore
+      - name: Restore and validate permanent Anu signing keystore
         shell: bash
         env:
           ANU_KEYSTORE_BASE64: ${{ secrets.ANU_KEYSTORE_BASE64 }}
           ANU_KEYSTORE_PASSWORD: ${{ secrets.ANU_KEYSTORE_PASSWORD }}
         run: |
-          set -u
+          set -euo pipefail
           test -n "$ANU_KEYSTORE_BASE64" || { echo "ERROR: ANU_KEYSTORE_BASE64 is empty"; exit 1; }
           test -n "$ANU_KEYSTORE_PASSWORD" || { echo "ERROR: ANU_KEYSTORE_PASSWORD is empty"; exit 1; }
-          printf '%s' "$ANU_KEYSTORE_BASE64" | tr -d '\r\n' | base64 --decode > anu-release.jks 2>/tmp/anu-base64.err
-          rc=$?
-          if [ "$rc" -ne 0 ]; then
-            echo "ERROR: Base64 decode failed (exit $rc)."
-            cat /tmp/anu-base64.err
-            exit 1
-          fi
-          size=$(wc -c < anu-release.jks)
-          echo "Decoded keystore size: $size bytes"
-          test "$size" -gt 0 || { echo "ERROR: decoded keystore is empty"; exit 1; }
+
+          # Normalize accidental CR/LF characters introduced while creating the secret.
+          STORE_PASSWORD="$(printf '%s' "$ANU_KEYSTORE_PASSWORD" | tr -d '\r\n')"
+          test -n "$STORE_PASSWORD" || { echo "ERROR: normalized keystore password is empty"; exit 1; }
+
+          printf '%s' "$ANU_KEYSTORE_BASE64" | tr -d '\r\n' | base64 --decode > anu-release.jks
+          test -s anu-release.jks || { echo "ERROR: decoded keystore is empty"; exit 1; }
+
+          echo "Decoded keystore size: $(wc -c < anu-release.jks) bytes"
           echo "Keystore file type:"
           file anu-release.jks || true
-          echo "Attempting keystore discovery without printing secrets..."
+
           set +e
-          keytool -list -keystore anu-release.jks -storepass "$ANU_KEYSTORE_PASSWORD" >/tmp/anu-keytool.out 2>/tmp/anu-keytool.err
-          rc=$?
+          KEYTOOL_OUTPUT="$(keytool -list -v -keystore anu-release.jks -alias anu -storepass "$STORE_PASSWORD" 2>&1)"
+          KEYTOOL_RC=$?
           set -e
-          if [ "$rc" -ne 0 ]; then
-            echo "KEYTOOL_EXIT=$rc"
-            echo "KEYTOOL_ERROR_BEGIN"
-            sed -E 's/(password|storepass|keypass)[^:]*:.*/\1: [REDACTED]/Ig' /tmp/anu-keytool.err | head -20
-            echo "KEYTOOL_ERROR_END"
-            echo "Trying supported keystore types..."
-            for type in JKS PKCS12; do
-              set +e
-              keytool -list -storetype "$type" -keystore anu-release.jks -storepass "$ANU_KEYSTORE_PASSWORD" >/dev/null 2>/tmp/anu-${type}.err
-              trc=$?
-              set -e
-              echo "$type exit=$trc"
-            done
+
+          if [ "$KEYTOOL_RC" -ne 0 ]; then
+            echo "ERROR: GitHub keystore validation failed (keytool exit $KEYTOOL_RC)."
+            echo "The workflow will not expose the keystore password or key material."
+            echo "keytool diagnostic:"
+            printf '%s\n' "$KEYTOOL_OUTPUT" | sed -E 's/(-storepass|-keypass|password)[[:space:]]+[^[:space:]]+/\1 [REDACTED]/Ig' | head -20
             exit 1
           fi
-          echo "Keystore opened successfully."
-          if ! keytool -list -keystore anu-release.jks -alias anu -storepass "$ANU_KEYSTORE_PASSWORD" >/tmp/anu-alias.out 2>/tmp/anu-alias.err; then
-            echo "ERROR: keystore opens, but alias 'anu' is unavailable."
-            sed -E 's/(password|storepass|keypass)[^:]*:.*/\1: [REDACTED]/Ig' /tmp/anu-alias.err | head -20
-            exit 1
-          fi
-          ACTUAL_SHA256="$(keytool -list -v -keystore anu-release.jks -alias anu -storepass "$ANU_KEYSTORE_PASSWORD" 2>/dev/null | awk -F': ' '/SHA256:/{print $2; exit}')"
+
+          ACTUAL_SHA256="$(printf '%s\n' "$KEYTOOL_OUTPUT" | awk -F': ' '/SHA256:/{print $2; exit}')"
           EXPECTED_SHA256="92:79:36:74:05:FE:9A:70:56:EF:18:8D:18:05:BC:E5:42:26:74:FD:58:83:E0:59:EE:DC:29:C9:76:E3:E8:0B"
           echo "GitHub decoded keystore SHA-256: ${ACTUAL_SHA256:-NOT_FOUND}"
           echo "Expected permanent Anu SHA-256: $EXPECTED_SHA256"
+
           if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
-            echo "ERROR: fingerprint mismatch. The GitHub secret contains a different keystore."
+            echo "ERROR: GitHub secret contains a different keystore."
             exit 1
           fi
+
           echo "Permanent Anu signing keystore validation: OK"
 
       - name: Create local.properties
@@ -108,8 +97,9 @@ jobs:
         env:
           ANU_KEYSTORE_PASSWORD: ${{ secrets.ANU_KEYSTORE_PASSWORD }}
         run: |
-          set -o pipefail
-          test -n "$ANU_KEYSTORE_PASSWORD"
+          set -euo pipefail
+          STORE_PASSWORD="$(printf '%s' "$ANU_KEYSTORE_PASSWORD" | tr -d '\r\n')"
+          test -n "$STORE_PASSWORD"
           ./gradlew --no-daemon --stacktrace --info clean assembleDebug 2>&1 | tee gradle-build.log
 
       - name: Verify debug APK
