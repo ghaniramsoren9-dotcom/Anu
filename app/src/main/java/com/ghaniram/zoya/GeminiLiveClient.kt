@@ -78,7 +78,6 @@ class GeminiLiveClient(
                     put("sessionResumption", JSONObject().apply {
                         latestResumptionHandle?.takeIf { it.isNotBlank() }?.let { put("handle", it) }
                     })
-                    put("proactivity", JSONObject().put("proactiveAudio", true))
                     put("outputAudioTranscription", JSONObject())
                     put("inputAudioTranscription", JSONObject())
                     put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text",
@@ -125,8 +124,6 @@ class GeminiLiveClient(
         }
 
         json.optJSONObject("goAway")?.let {
-            // The Live API deliberately ends WebSocket connections after a bounded lifetime.
-            // Keep the app responsive and let the session manager reconnect using the latest handle.
             callbacks.onError("Gemini Live connection is ending; reconnecting Anu…")
             webSocket?.close(1000, "Live API GoAway")
             return
