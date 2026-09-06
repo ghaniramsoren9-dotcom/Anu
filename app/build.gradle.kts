@@ -20,9 +20,10 @@ android {
     signingConfigs {
         create("debugConfig") {
             storeFile = file("${rootDir}/debug.keystore")
+            // The keystore was created with the same password for the store and key.
             storePassword = System.getenv("ANU_KEYSTORE_PASSWORD") ?: ""
-            keyAlias = System.getenv("ANU_KEY_ALIAS") ?: "anu"
-            keyPassword = System.getenv("ANU_KEY_PASSWORD") ?: ""
+            keyAlias = "anu"
+            keyPassword = System.getenv("ANU_KEYSTORE_PASSWORD") ?: ""
         }
     }
 
