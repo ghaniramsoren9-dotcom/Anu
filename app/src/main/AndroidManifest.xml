@@ -50,11 +50,9 @@
                 <action android:name="android.bluetooth.device.action.ACL_DISCONNECTED" />
                 <action android:name="android.net.conn.CONNECTIVITY_CHANGE" />
                 <action android:name="android.media.RINGER_MODE_CHANGED" />
-                <action android:name="android.intent.action.PACKAGE_ADDED" />
-                <action android:name="android.intent.action.PACKAGE_REMOVED" />
-                <data android:scheme="package" />
             </intent-filter>
         </receiver>
+        <receiver android:name=".AnuTaskAlarmReceiver" android:enabled="true" android:exported="false" />
         <service android:name=".AccessibilityControlService" android:label="Anu" android:description="@string/accessibility_service_description" android:exported="true" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"><intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter><meta-data android:name="android.accessibilityservice" android:resource="@xml/zoya_accessibility_service" /></service>
     </application>
 </manifest>
