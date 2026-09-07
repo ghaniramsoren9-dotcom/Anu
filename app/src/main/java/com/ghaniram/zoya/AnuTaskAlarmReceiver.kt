@@ -8,9 +8,23 @@ import android.content.Intent
 class AnuTaskAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action != "com.ghaniram.zoya.ACTION_TASK_ALARM") return
-        val title = intent.getStringExtra("task_title")?.trim().orEmpty()
-        if (title.isBlank()) return
-        val event = "It is time for the user's reminder: $title."
-        ProactiveEventEngine.dispatch(context.applicationContext, event, "task:${intent.getStringExtra("task_id") ?: title}")
+        fire(
+            context,
+            intent.getStringExtra("task_id").orEmpty(),
+            intent.getStringExtra("task_title").orEmpty(),
+            intent.getStringExtra("task_time").orEmpty()
+        )
+    }
+
+    companion object {
+        fun fire(context: Context, taskId: String, title: String, timeLabel: String) {
+            if (title.isBlank()) return
+            val event = if (timeLabel.isBlank()) {
+                "It is time for the user's reminder: $title."
+            } else {
+                "It is time for the user's reminder: $title, scheduled for $timeLabel."
+            }
+            ProactiveEventEngine.dispatch(context.applicationContext, event, "task:${taskId.ifBlank { title }}")
+        }
     }
 }
