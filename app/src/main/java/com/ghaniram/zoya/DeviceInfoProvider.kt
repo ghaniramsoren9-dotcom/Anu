@@ -50,8 +50,9 @@ object DeviceInfoProvider {
             append("Location: $location")
         }
 
-        // Text input sets this bridge. Voice input may not, so also infer the latest
-        // user utterance directly from the session state before a getDeviceInfo call.
+        // Text and voice both reach this provider. Prefer the one-shot query bridge,
+        // then fall back to the latest user message. Never return the whole snapshot
+        // unless the user explicitly asks for complete/all device information.
         val query = DeviceQueryContext.consume().ifBlank {
             runCatching {
                 ZoyaSessionManager.state.value.chatMessages.lastOrNull { it.role == ChatRole.USER }?.text.orEmpty()
@@ -60,21 +61,27 @@ object DeviceInfoProvider {
 
         if (query.isBlank()) return "Device: ${Build.MANUFACTURER} ${Build.MODEL}. Android ${Build.VERSION.RELEASE}."
         val lines = full.lines()
-        fun pick(vararg prefixes: String): String = lines.filter { line -> prefixes.any { p -> line.lowercase(Locale.getDefault()).startsWith(p) } }.joinToString("\n")
+        fun pick(vararg prefixes: String): String = lines
+            .filter { line -> prefixes.any { p -> line.lowercase(Locale.getDefault()).startsWith(p) } }
+            .joinToString("\n")
+
+        val asksAll = query.contains("complete") || query.contains("all device") ||
+            query.contains("full device") || query.contains("ସମ୍ପୂର୍ଣ୍ଣ") || query.contains("ସବୁ device") || query.contains("ସବୁ ତଥ୍ୟ")
+
         return when {
-            query.contains("battery") || query.contains("ବ୍ୟାଟେରୀ") || query.contains("charge") || query.contains("charging") -> pick("battery:")
-            query.contains("temperature") || query.contains("thermal") -> pick("battery:")
-            query.contains("ram") || query.contains("memory") -> pick("ram:", "app memory:")
-            query.contains("storage") || query.contains("disk") || query.contains("free space") -> pick("storage:")
-            query.contains("cpu") || query.contains("processor") -> pick("cpu:")
-            query.contains("gpu") || query.contains("graphics") -> pick("gpu:")
-            query.contains("display") || query.contains("screen resolution") || query.contains("resolution") -> pick("display:")
+            query.contains("battery") || query.contains("ବ୍ୟାଟେରୀ") || query.contains("ବ୍ୟାଟେରି") || query.contains("charge") || query.contains("charging") || query.contains("ଚାର୍ଜ") -> pick("battery:")
+            query.contains("temperature") || query.contains("thermal") || query.contains("ତାପମାତ୍ରା") -> pick("battery:")
+            query.contains("ram") || query.contains("memory") || query.contains("ମେମୋରୀ") || query.contains("ରାମ") -> pick("ram:", "app memory:")
+            query.contains("storage") || query.contains("disk") || query.contains("free space") || query.contains("ଷ୍ଟୋରେଜ") || query.contains("ସ୍ପେସ") -> pick("storage:")
+            query.contains("cpu") || query.contains("processor") || query.contains("ପ୍ରୋସେସର") -> pick("cpu:")
+            query.contains("gpu") || query.contains("graphics") || query.contains("ଗ୍ରାଫିକ୍ସ") -> pick("gpu:")
+            query.contains("display") || query.contains("screen resolution") || query.contains("resolution") || query.contains("ଡିସପ୍ଲେ") || query.contains("ରେଜୋଲୁସନ") -> pick("display:")
             query.contains("time") || query.contains("କେତେ ବାଜି") || query.contains("ସମୟ") -> pick("india time:")
             query.contains("location") || query.contains("ଅବସ୍ଥାନ") || query.contains("where am i") -> pick("location:")
-            query.contains("model") -> pick("model:")
-            query.contains("manufacturer") || query.contains("brand") -> pick("manufacturer:")
-            query.contains("android version") -> pick("android:")
-            query.contains("device information") || query.contains("device info") || query.contains("phone information") || query.contains("phone info") ->
+            query.contains("model") || query.contains("ମଡେଲ") -> pick("model:")
+            query.contains("manufacturer") || query.contains("brand") || query.contains("କମ୍ପାନୀ") || query.contains("ବ୍ରାଣ୍ଡ") -> pick("manufacturer:")
+            query.contains("android version") || query.contains("ଆଣ୍ଡ୍ରଏଡ") -> pick("android:")
+            asksAll || query.contains("device information") || query.contains("device info") || query.contains("phone information") || query.contains("phone info") ->
                 pick("model:", "android:", "battery:")
             else -> "ମୁଁ ତୁମର ପଚରାଯାଇଥିବା device information ଅନୁସାରେ କେବଳ ଦରକାରୀ ତଥ୍ୟ ଦେବି।"
         }.ifBlank { "ଡିଭାଇସ୍ ସୂଚନା ଏବେ ମିଳିଲା ନାହିଁ।" }
