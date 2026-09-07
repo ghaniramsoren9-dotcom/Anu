@@ -9,14 +9,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-/** Bridges persistent settings changes to the process-wide runtime. */
+/** Bridges persistent settings changes to the process-wide runtime without restarting the UI/live session. */
 class AnuSettingsRuntimeObserver(context: Context) : SharedPreferences.OnSharedPreferenceChangeListener {
     private val appContext = context.applicationContext
     private val prefs = appContext.getSharedPreferences("anu_settings_preferences", Context.MODE_PRIVATE)
     private val handler = Handler(Looper.getMainLooper())
     private val syncRunnable = Runnable {
         CapabilityRegistry.refresh(appContext)
-        ZoyaSessionManager.onSettingsUpdated()
     }
     private val wakeWordManager = WakeWordManager(appContext) { ZoyaSessionManager.connect() }
 
@@ -37,6 +36,16 @@ class AnuSettingsRuntimeObserver(context: Context) : SharedPreferences.OnSharedP
         handler.postDelayed(syncRunnable, 350L)
         if (key == "bring_wake_word_back" || key == "voice_guardian_on") {
             handler.post { syncWakeWord() }
+        }
+        // Only settings that fundamentally change the active Live session should reconnect.
+        // Theme, event-trigger, behaviour and UI settings must apply without tearing down
+        // the current Activity/session, otherwise Chat/Settings appear to refresh.
+        if (key == "custom_gemini_key" || key == "voice_speaker") {
+            handler.postDelayed({
+                if (ZoyaSessionManager.state.value.connectionState != ConnectionState.DISCONNECTED) {
+                    ZoyaSessionManager.onSettingsUpdated()
+                }
+            }, 500L)
         }
     }
 
