@@ -11,5 +11,8 @@ class AnuApplication : Application() {
         // Initialize the process-wide session before background receivers can use it.
         ZoyaSessionManager.initialize(this)
         settingsObserver = AnuSettingsRuntimeObserver(this)
+        // Gemini Live rotates its WebSocket connection roughly every 10 minutes.
+        // Keep an explicitly active Anu voice session automatically recovered.
+        LiveConnectionWatchdog.start(this)
     }
 }
