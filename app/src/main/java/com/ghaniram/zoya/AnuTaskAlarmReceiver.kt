@@ -3,6 +3,10 @@ package com.ghaniram.zoya
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
+import android.speech.tts.TextToSpeech
+import java.util.Locale
 
 /** Receives scheduled task alarms and hands them to Anu's proactive voice runtime. */
 class AnuTaskAlarmReceiver : BroadcastReceiver() {
@@ -19,12 +23,16 @@ class AnuTaskAlarmReceiver : BroadcastReceiver() {
     companion object {
         fun fire(context: Context, taskId: String, title: String, timeLabel: String) {
             if (title.isBlank()) return
+            val app = context.applicationContext
             val event = if (timeLabel.isBlank()) {
-                "It is time for the user's reminder: $title."
+                "It is time for your reminder: $title."
             } else {
-                "It is time for the user's reminder: $title, scheduled for $timeLabel."
+                "It is time for your reminder: $title, scheduled for $timeLabel."
             }
-            ProactiveEventEngine.dispatch(context.applicationContext, event, "task:${taskId.ifBlank { title }}")
+
+            // Keep the normal Anu event path. ProactiveVoiceBridge deliberately avoids
+            // reconnecting a disabled microphone and falls back to TTS when needed.
+            ProactiveEventEngine.dispatch(app, event, "task:${taskId.ifBlank { title }}")
         }
     }
 }
