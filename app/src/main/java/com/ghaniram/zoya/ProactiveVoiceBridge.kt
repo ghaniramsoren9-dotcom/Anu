@@ -21,8 +21,6 @@ object ProactiveVoiceBridge {
         ZoyaSessionManager.initialize(app)
 
         if (ZoyaSessionManager.state.value.connectionState != ConnectionState.DISCONNECTED) {
-            // Existing Live session: send the proactive prompt only. Do not touch
-            // recording state or call connect(); the session manager owns the mic.
             runCatching {
                 val field = ZoyaSessionManager::class.java.getDeclaredField("client")
                 field.isAccessible = true
@@ -34,8 +32,6 @@ object ProactiveVoiceBridge {
             }
         }
 
-        // User has intentionally left Anu's mic/session off. Speak the notification
-        // without creating a Gemini session, so the microphone remains OFF.
         val announcement = prompt
             .substringAfter("[PROACTIVE SYSTEM EVENT]", prompt)
             .substringBefore("Speak to the user proactively")
@@ -47,8 +43,10 @@ object ProactiveVoiceBridge {
 
     private fun speakWithoutMic(context: Context, text: String) {
         if (text.isBlank()) return
-        val tts = TextToSpeech(context) { status ->
+        var engine: TextToSpeech? = null
+        engine = TextToSpeech(context) { status ->
             if (status == TextToSpeech.SUCCESS) {
+                val tts = engine ?: return@TextToSpeech
                 val locale = when (ZoyaSessionManager.state.value.language) {
                     ZoyaLanguage.HINDI -> Locale("hi", "IN")
                     ZoyaLanguage.SANTALI -> Locale("en", "IN")
@@ -57,8 +55,9 @@ object ProactiveVoiceBridge {
                 }
                 runCatching { tts.language = locale }
                 val params = Bundle()
-                params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "anu_proactive_${System.currentTimeMillis()}")
-                tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, params.getString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID))
+                val utteranceId = "anu_proactive_${System.currentTimeMillis()}"
+                params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId)
+                tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
             }
         }
     }
