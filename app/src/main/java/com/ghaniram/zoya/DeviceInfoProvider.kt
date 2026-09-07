@@ -17,7 +17,7 @@ import android.os.StatFs
 import java.io.File
 import java.util.Locale
 
-/** Fresh, local device telemetry. Values are only read when requested by the assistant. */
+/** Fresh, local device telemetry. Returns only the information actually requested. */
 object DeviceInfoProvider {
     fun snapshot(context: Context): String {
         val battery = battery(context)
@@ -29,8 +29,8 @@ object DeviceInfoProvider {
         val locationTime = DeviceContactLocationManager(deviceContext)
         val indiaTime = locationTime.indiaTime()
         val location = locationTime.currentLocation()
+
         val full = buildString {
-            append("DEVICE TELEMETRY (fresh local Android data):\n")
             append("Manufacturer: ${Build.MANUFACTURER}\n")
             append("Model: ${Build.MODEL}\n")
             append("Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})\n")
@@ -44,42 +44,39 @@ object DeviceInfoProvider {
             append("GPU: ${gpu.renderer}")
             gpu.utilization?.let { append(", current utilization ${it}%") }
             gpu.headroom?.let { append(", Android 16 GPU headroom ${format(it)}% available") }
-            if (gpu.utilization == null && gpu.headroom == null) append(", utilization/headroom unavailable from this device/API")
             append("\n")
             append("Display: ${context.resources.displayMetrics.widthPixels}x${context.resources.displayMetrics.heightPixels}, density ${context.resources.displayMetrics.density}\n")
             append("India time: $indiaTime\n")
-            append("Location: $location\n")
+            append("Location: $location")
         }
 
-        val query = DeviceQueryContext.consume().lowercase(Locale.getDefault())
-        if (query.isBlank()) return full
+        // Text input sets this bridge. Voice input may not, so also infer the latest
+        // user utterance directly from the session state before a getDeviceInfo call.
+        val query = DeviceQueryContext.consume().ifBlank {
+            runCatching {
+                ZoyaSessionManager.state.value.chatMessages.lastOrNull { it.role == ChatRole.USER }?.text.orEmpty()
+            }.getOrDefault("")
+        }.lowercase(Locale.getDefault())
+
+        if (query.isBlank()) return "Device: ${Build.MANUFACTURER} ${Build.MODEL}. Android ${Build.VERSION.RELEASE}."
         val lines = full.lines()
         fun pick(vararg prefixes: String): String = lines.filter { line -> prefixes.any { p -> line.lowercase(Locale.getDefault()).startsWith(p) } }.joinToString("\n")
         return when {
-            query.contains("battery") || query.contains("ବ୍ୟାଟେରୀ") || query.contains("charge") || query.contains("charging") || query.contains("temperature") ->
-                pick("battery:")
-            query.contains("ram") || query.contains("memory") ->
-                pick("ram:", "app memory:")
-            query.contains("storage") || query.contains("disk") || query.contains("free space") ->
-                pick("storage:")
-            query.contains("cpu") || query.contains("processor") ->
-                pick("cpu:")
-            query.contains("gpu") || query.contains("graphics") ->
-                pick("gpu:")
-            query.contains("display") || query.contains("screen resolution") || query.contains("resolution") ->
-                pick("display:")
-            query.contains("time") || query.contains("କେତେ ବାଜି") || query.contains("ସମୟ") ->
-                pick("india time:")
-            query.contains("location") || query.contains("ଅବସ୍ଥାନ") || query.contains("where am i") ->
-                pick("location:")
-            query.contains("model") ->
-                pick("model:")
-            query.contains("manufacturer") || query.contains("brand") ->
-                pick("manufacturer:")
-            query.contains("android version") || query.contains("android") ->
-                pick("android:")
-            else ->
+            query.contains("battery") || query.contains("ବ୍ୟାଟେରୀ") || query.contains("charge") || query.contains("charging") -> pick("battery:")
+            query.contains("temperature") || query.contains("thermal") -> pick("battery:")
+            query.contains("ram") || query.contains("memory") -> pick("ram:", "app memory:")
+            query.contains("storage") || query.contains("disk") || query.contains("free space") -> pick("storage:")
+            query.contains("cpu") || query.contains("processor") -> pick("cpu:")
+            query.contains("gpu") || query.contains("graphics") -> pick("gpu:")
+            query.contains("display") || query.contains("screen resolution") || query.contains("resolution") -> pick("display:")
+            query.contains("time") || query.contains("କେତେ ବାଜି") || query.contains("ସମୟ") -> pick("india time:")
+            query.contains("location") || query.contains("ଅବସ୍ଥାନ") || query.contains("where am i") -> pick("location:")
+            query.contains("model") -> pick("model:")
+            query.contains("manufacturer") || query.contains("brand") -> pick("manufacturer:")
+            query.contains("android version") -> pick("android:")
+            query.contains("device information") || query.contains("device info") || query.contains("phone information") || query.contains("phone info") ->
                 pick("model:", "android:", "battery:")
+            else -> "ମୁଁ ତୁମର ପଚରାଯାଇଥିବା device information ଅନୁସାରେ କେବଳ ଦରକାରୀ ତଥ୍ୟ ଦେବି।"
         }.ifBlank { "ଡିଭାଇସ୍ ସୂଚନା ଏବେ ମିଳିଲା ନାହିଁ।" }
     }
 
@@ -118,16 +115,7 @@ object DeviceInfoProvider {
     }
 
     private data class Gpu(val renderer: String, val utilization: Int?, val headroom: Float?)
-
-    /** Actual GPU renderer plus best-effort utilization and Android 16 GPU headroom. */
-    private fun gpu(context: Context): Gpu {
-        val renderer = readGlRenderer() ?: buildFallbackGpuName()
-        val utilization = readGpuUtilization()
-        val headroom = readGpuHeadroom(context)
-        return Gpu(renderer, utilization, headroom)
-    }
-
-    private fun readGpuHeadroom(context: Context): Float? = null
+    private fun gpu(context: Context): Gpu = Gpu(readGlRenderer() ?: buildFallbackGpuName(), readGpuUtilization(), null)
 
     private fun readGlRenderer(): String? = runCatching {
         var display: EGLDisplay = EGL14.EGL_NO_DISPLAY
@@ -161,21 +149,14 @@ object DeviceInfoProvider {
         }
     }
 
-    private fun readGpuUtilization(): Int? {
-        val candidates = listOf(
-            "/sys/class/kgsl/kgsl-3d0/gpu_busy_percentage",
-            "/sys/class/kgsl/kgsl-3d0/gpu_busy_percent"
-        )
-        for (path in candidates) {
-            val value = runCatching { File(path).readText().trim().removeSuffix("%") }.getOrNull()?.toIntOrNull()
-            if (value != null && value in 0..100) return value
-        }
-        return null
-    }
+    private fun readGpuUtilization(): Int? = listOf(
+        "/sys/class/kgsl/kgsl-3d0/gpu_busy_percentage",
+        "/sys/class/kgsl/kgsl-3d0/gpu_busy_percent"
+    ).asSequence().mapNotNull { path -> runCatching { File(path).readText().trim().removeSuffix("%").toIntOrNull() }.getOrNull() }
+        .firstOrNull { it in 0..100 }
 
     private fun format(value: Double) = String.format(Locale.US, "%.1f", value)
     private fun format(value: Float) = String.format(Locale.US, "%.1f", value)
-
     private const val MB = 1024L * 1024L
     private const val GB = 1024.0 * 1024.0 * 1024.0
 }
