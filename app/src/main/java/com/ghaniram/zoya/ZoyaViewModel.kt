@@ -32,9 +32,11 @@ class ZoyaViewModel(application: Application) : AndroidViewModel(application) {
                 lower.contains("device info") || lower.contains("phone information") ||
                 lower.contains("phone info") || lower.contains("ମୋ ଫୋନ") || lower.contains("phone")
             if (deviceRequest) {
-                val telemetry = withContext(Dispatchers.IO) { DeviceInfoProvider.snapshot(getApplication()) }
+                // ZoyaSessionManager already collects the same local telemetry for device
+                // questions. Do not append the raw snapshot to the user's chat message;
+                // that made the entire telemetry dump appear in the conversation.
                 ensureSessionReady()
-                ZoyaSessionManager.sendText("$clean\n\n[LOCAL DEVICE TELEMETRY — use these fresh values as ground truth; do not invent or override them]\n$telemetry")
+                ZoyaSessionManager.sendText(clean)
             } else {
                 ensureSessionReady()
                 ZoyaSessionManager.sendText(clean)
@@ -59,9 +61,30 @@ class ZoyaViewModel(application: Application) : AndroidViewModel(application) {
     fun clearMemories() = ZoyaSessionManager.clearMemories()
     fun clearChatHistory() = ZoyaSessionManager.clearChatHistory()
     fun dismissError() = ZoyaSessionManager.dismissError()
-    fun addTask(title: String, time: String) = ZoyaSessionManager.addTask(title, time)
-    fun toggleTask(id: String) = ZoyaSessionManager.toggleTask(id)
-    fun deleteTask(id: String) = ZoyaSessionManager.deleteTask(id)
+
+    fun addTask(title: String, time: String) {
+        ZoyaSessionManager.addTask(title, time)
+        val task = state.value.tasks.lastOrNull { it.title == title && it.timeLabel == time && !it.isCompleted }
+        if (task != null) AnuTaskAlarmScheduler.schedule(getApplication(), task)
+    }
+
+    fun toggleTask(id: String) {
+        val task = state.value.tasks.firstOrNull { it.id == id }
+        ZoyaSessionManager.toggleTask(id)
+        if (task != null) {
+            if (task.isCompleted) {
+                AnuTaskAlarmScheduler.schedule(getApplication(), task.copy(isCompleted = false))
+            } else {
+                AnuTaskAlarmScheduler.cancel(getApplication(), task.id)
+            }
+        }
+    }
+
+    fun deleteTask(id: String) {
+        AnuTaskAlarmScheduler.cancel(getApplication(), id)
+        ZoyaSessionManager.deleteTask(id)
+    }
+
     fun setVisionActive(active: Boolean) = ZoyaSessionManager.setVisionActive(active)
     fun setVisionDescription(desc: String) = ZoyaSessionManager.setVisionDescription(desc)
 
