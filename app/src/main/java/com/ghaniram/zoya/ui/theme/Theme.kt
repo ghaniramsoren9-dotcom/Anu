@@ -19,11 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.ghaniram.zoya.AnuSettingsStore
 
-/**
- * Runtime-observable design tokens. Keeping these as Compose state means the
- * existing screens that reference AnuPrimary/AnuCardSurface/etc. update without
- * requiring an Activity recreation when a theme preset changes.
- */
+/** Runtime-observable design tokens used by the existing UI. */
 var AnuPrimary by mutableStateOf(Color(0xFF6C38FF))
 var AnuSecondary by mutableStateOf(Color(0xFF9D5CFF))
 var AnuAccent by mutableStateOf(Color(0xFFC084FC))
@@ -35,8 +31,6 @@ var AnuTextDark by mutableStateOf(Color(0xFF1A1230))
 var AnuTextMuted by mutableStateOf(Color(0xFF8B82A0))
 var AnuBorder by mutableStateOf(Color(0xFFEBE6FA))
 var AnuStatusGreen by mutableStateOf(Color(0xFF22C55E))
-
-// Dark/base palette aliases kept for source compatibility.
 var AnuDarkPrimary by mutableStateOf(Color(0xFF9D5CFF))
 var AnuDarkBackground by mutableStateOf(Color(0xFF0F172A))
 var AnuDarkCardSurface by mutableStateOf(Color(0xFF1E293B))
@@ -60,19 +54,7 @@ data class AnuCustomColors(
 )
 
 val LocalAnuColors = staticCompositionLocalOf {
-    AnuCustomColors(
-        isDark = false,
-        background = AnuBackground,
-        cardBackground = AnuCardSurface,
-        cardBorder = AnuBorder,
-        textPrimary = AnuTextDark,
-        textSecondary = AnuTextMuted,
-        inputBackground = AnuLavenderBg,
-        chipBackground = AnuLavenderBg,
-        accentPrimary = AnuPrimary,
-        accentSecondary = AnuSecondary,
-        topBarTint = AnuTextDark
-    )
+    AnuCustomColors(false, AnuBackground, AnuCardSurface, AnuBorder, AnuTextDark, AnuTextMuted, AnuLavenderBg, AnuLavenderBg, AnuPrimary, AnuSecondary, AnuTextDark)
 }
 
 private data class RuntimePalette(
@@ -97,19 +79,8 @@ private fun paletteFor(name: String, dark: Boolean): RuntimePalette {
             "Nocturne" -> Color(0xFF6366F1)
             else -> Color(0xFF6C38FF)
         }
-        return RuntimePalette(
-            accent = accent,
-            secondary = accent.copy(alpha = 0.82f),
-            background = Color(0xFFF8FAFC),
-            card = Color.White,
-            border = Color(0xFFE2E8F0),
-            text = Color(0xFF0F172A),
-            muted = Color(0xFF64748B),
-            soft = accent.copy(alpha = 0.12f),
-            lavender = accent.copy(alpha = 0.08f)
-        )
+        return RuntimePalette(accent, accent.copy(alpha = 0.82f), Color(0xFFF8FAFC), Color.White, Color(0xFFE2E8F0), Color(0xFF0F172A), Color(0xFF64748B), accent.copy(alpha = 0.12f), accent.copy(alpha = 0.08f))
     }
-
     return when (name) {
         "Obsidian" -> RuntimePalette(Color(0xFF94A3B8), Color(0xFFCBD5E1), Color(0xFF18181B), Color(0xFF27272A), Color(0xFF3F3F46), Color(0xFFFAFAFA), Color(0xFFA1A1AA), Color(0xFF3F3F46), Color(0xFF27272A))
         "Nocturne" -> RuntimePalette(Color(0xFF818CF8), Color(0xFFA5B4FC), Color(0xFF1E1B4B), Color(0xFF312E81), Color(0xFF4338CA), Color(0xFFEEF2FF), Color(0xFFA5B4FC), Color(0xFF312E81), Color(0xFF28235C))
@@ -121,7 +92,7 @@ private fun paletteFor(name: String, dark: Boolean): RuntimePalette {
     }
 }
 
-private fun applyRuntimePalette(p: RuntimePalette, dark: Boolean) {
+private fun applyRuntimePalette(p: RuntimePalette) {
     AnuPrimary = p.accent
     AnuSecondary = p.secondary
     AnuAccent = p.secondary
@@ -143,58 +114,30 @@ private fun applyRuntimePalette(p: RuntimePalette, dark: Boolean) {
 }
 
 private fun buildLightScheme(p: RuntimePalette) = lightColorScheme(
-    primary = p.accent,
-    onPrimary = Color.White,
-    primaryContainer = p.soft,
-    onPrimaryContainer = p.accent,
-    secondary = p.secondary,
-    onSecondary = Color.White,
-    secondaryContainer = p.lavender,
-    onSecondaryContainer = p.text,
-    tertiary = p.secondary,
-    onTertiary = Color.White,
-    background = p.background,
-    onBackground = p.text,
-    surface = p.card,
-    onSurface = p.text,
-    surfaceVariant = p.lavender,
-    onSurfaceVariant = p.muted,
-    outline = p.border,
-    outlineVariant = p.border,
-    error = Color(0xFFEF4444)
+    primary = p.accent, onPrimary = Color.White, primaryContainer = p.soft, onPrimaryContainer = p.accent,
+    secondary = p.secondary, onSecondary = Color.White, secondaryContainer = p.lavender, onSecondaryContainer = p.text,
+    tertiary = p.secondary, onTertiary = Color.White, background = p.background, onBackground = p.text,
+    surface = p.card, onSurface = p.text, surfaceVariant = p.lavender, onSurfaceVariant = p.muted,
+    outline = p.border, outlineVariant = p.border, error = Color(0xFFEF4444)
 )
 
 private fun buildDarkScheme(p: RuntimePalette) = darkColorScheme(
-    primary = p.accent,
-    onPrimary = Color.White,
-    primaryContainer = p.soft,
-    onPrimaryContainer = p.secondary,
-    secondary = p.secondary,
-    onSecondary = Color.White,
-    secondaryContainer = p.card,
-    onSecondaryContainer = p.text,
-    tertiary = p.secondary,
-    onTertiary = p.background,
-    background = p.background,
-    onBackground = p.text,
-    surface = p.card,
-    onSurface = p.text,
-    surfaceVariant = p.card,
-    onSurfaceVariant = p.muted,
-    outline = p.border,
-    outlineVariant = p.border,
-    error = Color(0xFFEF4444)
+    primary = p.accent, onPrimary = Color.White, primaryContainer = p.soft, onPrimaryContainer = p.secondary,
+    secondary = p.secondary, onSecondary = Color.White, secondaryContainer = p.card, onSecondaryContainer = p.text,
+    tertiary = p.secondary, onTertiary = p.background, background = p.background, onBackground = p.text,
+    surface = p.card, onSurface = p.text, surfaceVariant = p.card, onSurfaceVariant = p.muted,
+    outline = p.border, outlineVariant = p.border, error = Color(0xFFEF4444)
 )
 
 private val AnuTypography = Typography(
-    displayLarge = androidx.compose.ui.text.TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold, color = AnuTextDark, letterSpacing = (-0.5).sp),
-    titleLarge = androidx.compose.ui.text.TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold, color = AnuTextDark, letterSpacing = (-0.2).sp),
-    titleMedium = androidx.compose.ui.text.TextStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = AnuTextDark),
-    bodyLarge = androidx.compose.ui.text.TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = AnuTextDark),
-    bodyMedium = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, lineHeight = 18.sp, color = AnuTextDark),
-    bodySmall = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, lineHeight = 16.sp, color = AnuTextMuted),
+    displayLarge = androidx.compose.ui.text.TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp),
+    titleLarge = androidx.compose.ui.text.TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.2).sp),
+    titleMedium = androidx.compose.ui.text.TextStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold),
+    bodyLarge = androidx.compose.ui.text.TextStyle(fontSize = 15.sp, lineHeight = 22.sp),
+    bodyMedium = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, lineHeight = 18.sp),
+    bodySmall = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, lineHeight = 16.sp),
     labelLarge = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.2.sp),
-    labelMedium = androidx.compose.ui.text.TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Medium, color = AnuTextMuted)
+    labelMedium = androidx.compose.ui.text.TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Medium)
 )
 
 @Composable
@@ -203,10 +146,9 @@ fun ZoyaTheme(
     content: @Composable () -> Unit
 ) {
     val context = LocalContext.current
-    val store = rememberThemeStore(context)
+    val store = androidx.compose.runtime.remember(context.applicationContext) { AnuSettingsStore.getInstance(context.applicationContext) }
     val settingsVersion by store.stateVersion.collectAsState()
-    val mode = store.themeMode
-    val effectiveDark = when (mode) {
+    val effectiveDark = when (store.themeMode) {
         "Dark" -> true
         "Light" -> false
         else -> isSystemInDarkTheme()
@@ -214,11 +156,9 @@ fun ZoyaTheme(
     val preset = store.themePreset
     val palette = paletteFor(preset, effectiveDark)
 
-    // Publish the selected preset into the legacy color tokens used throughout
-    // the existing UI. This is what makes preset switches immediate everywhere.
-    SideEffect(key1 = "$preset|$effectiveDark|$settingsVersion") {
-        applyRuntimePalette(palette, effectiveDark)
-    }
+    // SideEffect is available in the app's Compose BOM and publishes the selected
+    // palette to the existing color-token API after a successful composition.
+    SideEffect { applyRuntimePalette(palette) }
 
     val colorScheme = if (effectiveDark) buildDarkScheme(palette) else buildLightScheme(palette)
     val customColors = AnuCustomColors(
@@ -235,13 +175,11 @@ fun ZoyaTheme(
         topBarTint = palette.text
     )
 
+    // Read settingsVersion intentionally: it makes the root theme composition
+    // observe every settings write, including changes made by the theme screen.
+    if (settingsVersion < 0) Unit
+
     CompositionLocalProvider(LocalAnuColors provides customColors) {
         MaterialTheme(colorScheme = colorScheme, typography = AnuTypography, content = content)
     }
 }
-
-@Composable
-private fun rememberThemeStore(context: android.content.Context): AnuSettingsStore =
-    androidx.compose.runtime.remember(context.applicationContext) {
-        AnuSettingsStore.getInstance(context.applicationContext)
-    }
