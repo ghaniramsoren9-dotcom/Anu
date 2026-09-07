@@ -32,6 +32,7 @@
     <application android:name=".AnuApplication" android:allowBackup="true" android:icon="@mipmap/ic_launcher" android:label="@string/app_name" android:supportsRtl="true" android:theme="@style/Theme.Zoya">
         <activity android:name=".MainActivity" android:exported="true" android:label="@string/app_name" android:theme="@style/Theme.Zoya" android:supportsPictureInPicture="true" android:resizeableActivity="true" android:windowSoftInputMode="adjustResize"><intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter></activity>
         <activity android:name=".ZoyaControlCenterActivity" android:exported="false" android:label="Anu Control Center" />
+        <activity android:name=".CapabilityDiagnosticsActivity" android:exported="false" android:label="Capability Diagnostics" />
         <service android:name=".ZoyaForegroundService" android:exported="false" android:stopWithTask="false" android:foregroundServiceType="microphone" />
         <service android:name=".ZoyaOverlayService" android:exported="false" android:stopWithTask="false" />
         <service android:name=".ZoyaNotificationListenerService" android:exported="true" android:label="Anu Notification Access" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"><intent-filter><action android:name="android.service.notification.NotificationListenerService" /></intent-filter></service>
