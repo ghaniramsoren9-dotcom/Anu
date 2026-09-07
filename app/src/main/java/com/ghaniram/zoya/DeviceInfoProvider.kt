@@ -29,7 +29,7 @@ object DeviceInfoProvider {
         val locationTime = DeviceContactLocationManager(deviceContext)
         val indiaTime = locationTime.indiaTime()
         val location = locationTime.currentLocation()
-        return buildString {
+        val full = buildString {
             append("DEVICE TELEMETRY (fresh local Android data):\n")
             append("Manufacturer: ${Build.MANUFACTURER}\n")
             append("Model: ${Build.MODEL}\n")
@@ -50,6 +50,37 @@ object DeviceInfoProvider {
             append("India time: $indiaTime\n")
             append("Location: $location\n")
         }
+
+        val query = DeviceQueryContext.consume().lowercase(Locale.getDefault())
+        if (query.isBlank()) return full
+        val lines = full.lines()
+        fun pick(vararg prefixes: String): String = lines.filter { line -> prefixes.any { p -> line.lowercase(Locale.getDefault()).startsWith(p) } }.joinToString("\n")
+        return when {
+            query.contains("battery") || query.contains("ବ୍ୟାଟେରୀ") || query.contains("charge") || query.contains("charging") || query.contains("temperature") ->
+                pick("battery:")
+            query.contains("ram") || query.contains("memory") ->
+                pick("ram:", "app memory:")
+            query.contains("storage") || query.contains("disk") || query.contains("free space") ->
+                pick("storage:")
+            query.contains("cpu") || query.contains("processor") ->
+                pick("cpu:")
+            query.contains("gpu") || query.contains("graphics") ->
+                pick("gpu:")
+            query.contains("display") || query.contains("screen resolution") || query.contains("resolution") ->
+                pick("display:")
+            query.contains("time") || query.contains("କେତେ ବାଜି") || query.contains("ସମୟ") ->
+                pick("india time:")
+            query.contains("location") || query.contains("ଅବସ୍ଥାନ") || query.contains("where am i") ->
+                pick("location:")
+            query.contains("model") ->
+                pick("model:")
+            query.contains("manufacturer") || query.contains("brand") ->
+                pick("manufacturer:")
+            query.contains("android version") || query.contains("android") ->
+                pick("android:")
+            else ->
+                pick("model:", "android:", "battery:")
+        }.ifBlank { "ଡିଭାଇସ୍ ସୂଚନା ଏବେ ମିଳିଲା ନାହିଁ।" }
     }
 
     private data class Battery(val percent: Int, val charging: Boolean, val temperatureC: Float?)
