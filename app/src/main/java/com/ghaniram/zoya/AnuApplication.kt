@@ -12,13 +12,11 @@ class AnuApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        // Initialize the process-wide session before background receivers can use it.
         ZoyaSessionManager.initialize(this)
         settingsObserver = AnuSettingsRuntimeObserver(this)
 
-        // Manifest receivers are restricted for many implicit broadcasts on modern
-        // Android. Keep a process-wide dynamic receiver as well so charger, headset,
-        // Bluetooth and battery events are delivered while Anu's runtime is alive.
+        // Event Triggers are independent of Proactive Anu/screen awareness. Register the
+        // process receiver and the modern network callback as soon as the app process exists.
         runCatching {
             val filter = IntentFilter().apply {
                 addAction(Intent.ACTION_POWER_CONNECTED)
@@ -29,6 +27,7 @@ class AnuApplication : Application() {
                 addAction(Intent.ACTION_HEADSET_PLUG)
                 addAction("android.bluetooth.device.action.ACL_CONNECTED")
                 addAction("android.bluetooth.device.action.ACL_DISCONNECTED")
+                addAction("android.net.conn.CONNECTIVITY_CHANGE")
                 addAction(AudioManager.RINGER_MODE_CHANGED_ACTION)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -38,9 +37,7 @@ class AnuApplication : Application() {
                 registerReceiver(ZoyaSystemEventReceiver(), filter)
             }
         }
-
-        // Gemini Live rotates its WebSocket connection roughly every 10 minutes.
-        // Keep an explicitly active Anu voice session automatically recovered.
+        ProactiveEventEngine.startSystemEventMonitoring(this)
         LiveConnectionWatchdog.start(this)
     }
 }
