@@ -3,10 +3,6 @@ package com.ghaniram.zoya
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.Handler
-import android.os.Looper
-import android.speech.tts.TextToSpeech
-import java.util.Locale
 
 /** Receives scheduled task alarms and hands them to Anu's proactive voice runtime. */
 class AnuTaskAlarmReceiver : BroadcastReceiver() {
