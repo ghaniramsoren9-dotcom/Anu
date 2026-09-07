@@ -32,15 +32,12 @@ class ZoyaViewModel(application: Application) : AndroidViewModel(application) {
                 lower.contains("device info") || lower.contains("phone information") ||
                 lower.contains("phone info") || lower.contains("ମୋ ଫୋନ") || lower.contains("phone")
             if (deviceRequest) {
-                // ZoyaSessionManager already collects the same local telemetry for device
-                // questions. Do not append the raw snapshot to the user's chat message;
-                // that made the entire telemetry dump appear in the conversation.
-                ensureSessionReady()
-                ZoyaSessionManager.sendText(clean)
-            } else {
-                ensureSessionReady()
-                ZoyaSessionManager.sendText(clean)
+                // DeviceInfoProvider is called inside ZoyaSessionManager. Tell it which
+                // field the user asked for so only that field is returned to Chat/Live.
+                DeviceQueryContext.set(clean)
             }
+            ensureSessionReady()
+            ZoyaSessionManager.sendText(clean)
         }
     }
 
