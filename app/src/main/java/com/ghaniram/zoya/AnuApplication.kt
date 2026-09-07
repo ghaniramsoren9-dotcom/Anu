@@ -3,6 +3,7 @@ package com.ghaniram.zoya
 import android.app.Application
 import android.content.Intent
 import android.content.IntentFilter
+import android.media.AudioManager
 import android.os.Build
 
 /** Application bootstrap for Anu runtime services. */
@@ -28,7 +29,7 @@ class AnuApplication : Application() {
                 addAction(Intent.ACTION_HEADSET_PLUG)
                 addAction("android.bluetooth.device.action.ACL_CONNECTED")
                 addAction("android.bluetooth.device.action.ACL_DISCONNECTED")
-                addAction(Intent.ACTION_RINGER_MODE_CHANGED)
+                addAction(AudioManager.RINGER_MODE_CHANGED_ACTION)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 registerReceiver(ZoyaSystemEventReceiver(), filter, RECEIVER_NOT_EXPORTED)
