@@ -2,26 +2,64 @@ package com.ghaniram.zoya
 
 import android.app.Application
 import android.content.Context
+import android.os.Bundle
+import android.speech.tts.TextToSpeech
+import java.util.Locale
 
-/** Sends proactive text directly to the Live client without creating a chat message. */
+/**
+ * Sends proactive speech without changing the user's microphone preference.
+ *
+ * If the user has an active Live session, the event is spoken by Gemini. If the
+ * user has intentionally turned the microphone/session off, we do NOT reconnect
+ * the Live session (which would reopen the microphone); instead Android TTS
+ * announces the event without enabling microphone capture.
+ */
 object ProactiveVoiceBridge {
     fun dispatch(context: Context, prompt: String) {
         if (prompt.isBlank()) return
         val app = context.applicationContext as? Application ?: return
         ZoyaSessionManager.initialize(app)
-        if (ZoyaSessionManager.state.value.connectionState == ConnectionState.DISCONNECTED) {
-            ZoyaSessionManager.connect()
+
+        if (ZoyaSessionManager.state.value.connectionState != ConnectionState.DISCONNECTED) {
+            // Existing Live session: send the proactive prompt only. Do not touch
+            // recording state or call connect(); the session manager owns the mic.
+            runCatching {
+                val field = ZoyaSessionManager::class.java.getDeclaredField("client")
+                field.isAccessible = true
+                val client = field.get(ZoyaSessionManager) as? GeminiLiveClient
+                if (client != null) {
+                    client.sendText(prompt)
+                    return
+                }
+            }
         }
 
-        // GeminiLiveClient.sendText() already queues until setupComplete. The session
-        // manager intentionally keeps its Live client private, so this bridge invokes
-        // the public sendText method without routing the proactive prompt through the
-        // user-chat persistence path. If the implementation changes, fail safely.
-        runCatching {
-            val field = ZoyaSessionManager::class.java.getDeclaredField("client")
-            field.isAccessible = true
-            val client = field.get(ZoyaSessionManager) as? GeminiLiveClient ?: return
-            client.sendText(prompt)
+        // User has intentionally left Anu's mic/session off. Speak the notification
+        // without creating a Gemini session, so the microphone remains OFF.
+        val announcement = prompt
+            .substringAfter("[PROACTIVE SYSTEM EVENT]", prompt)
+            .substringBefore("Speak to the user proactively")
+            .trim()
+            .replace(Regex("\\s+"), " ")
+            .ifBlank { prompt.replace(Regex("\\s+"), " ").trim() }
+        speakWithoutMic(app, announcement)
+    }
+
+    private fun speakWithoutMic(context: Context, text: String) {
+        if (text.isBlank()) return
+        val tts = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                val locale = when (ZoyaSessionManager.state.value.language) {
+                    ZoyaLanguage.HINDI -> Locale("hi", "IN")
+                    ZoyaLanguage.SANTALI -> Locale("en", "IN")
+                    ZoyaLanguage.ODIA -> Locale("en", "IN")
+                    ZoyaLanguage.ENGLISH -> Locale.US
+                }
+                runCatching { tts.language = locale }
+                val params = Bundle()
+                params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "anu_proactive_${System.currentTimeMillis()}")
+                tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, params.getString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID))
+            }
         }
     }
 }
