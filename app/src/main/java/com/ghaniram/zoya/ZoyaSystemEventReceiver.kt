@@ -11,7 +11,9 @@ class ZoyaSystemEventReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val action = intent?.action ?: return
         val store = AnuSettingsStore.getInstance(context)
-        if (!store.eventAnnouncementsMaster || !store.proactiveAnu) return
+        // Event Triggers are their own feature. Proactive Anu controls ambient
+        // behaviour/screen awareness and must not disable explicit event announcements.
+        if (!store.eventAnnouncementsMaster) return
 
         val event = when (action) {
             Intent.ACTION_POWER_CONNECTED -> if (store.triggerChargerPlugged) "The phone charger was just plugged in." else null
@@ -24,14 +26,9 @@ class ZoyaSystemEventReceiver : BroadcastReceiver() {
             android.net.ConnectivityManager.CONNECTIVITY_ACTION -> connectivityEvent(store, intent)
             Intent.ACTION_AIRPLANE_MODE_CHANGED -> airplaneEvent(store, intent)
             AudioManager.RINGER_MODE_CHANGED_ACTION -> ringerEvent(store, intent)
-            Intent.ACTION_PACKAGE_ADDED -> if (store.triggerAppInstalled) "An app was just installed on the phone." else null
-            Intent.ACTION_PACKAGE_REMOVED -> if (store.triggerAppUninstalled) "An app was just uninstalled from the phone." else null
             else -> null
         } ?: return
 
-        // Do not wait for Gemini setup inside BroadcastReceiver/goAsync. The shared
-        // Live client queues outbound messages until setupComplete, so the event is
-        // safe to dispatch immediately and survives a slow WebSocket handshake.
         ProactiveEventEngine.dispatch(context, event, "$action:${intent.data?.schemeSpecificPart ?: ""}")
     }
 
