@@ -1,6 +1,7 @@
 package com.ghaniram.zoya
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -47,7 +48,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallTopAppBar
 import androidx.compose.material3.Surface
@@ -63,8 +63,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.ghaniram.zoya.ui.theme.*
@@ -81,20 +81,15 @@ class ZoyaControlCenterActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.light(
-                android.graphics.Color.TRANSPARENT,
-                android.graphics.Color.TRANSPARENT
-            ),
-            navigationBarStyle = SystemBarStyle.light(
-                android.graphics.Color.TRANSPARENT,
-                android.graphics.Color.TRANSPARENT
-            )
+            statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
         )
         super.onCreate(savedInstanceState)
         setContent {
             ZoyaTheme {
                 AnuSettingsScreen(
                     refreshToken = refreshToken,
+                    onDiagnostics = { startActivity(Intent(this, CapabilityDiagnosticsActivity::class.java)) },
                     onAccessibility = { ZoyaCapabilityManager.openAccessibility(this) },
                     onNotifications = { ZoyaCapabilityManager.openNotificationAccess(this) },
                     onOverlay = { ZoyaCapabilityManager.openOverlay(this) },
@@ -120,6 +115,7 @@ class ZoyaControlCenterActivity : ComponentActivity() {
 @Composable
 private fun AnuSettingsScreen(
     refreshToken: Int,
+    onDiagnostics: () -> Unit,
     onAccessibility: () -> Unit,
     onNotifications: () -> Unit,
     onOverlay: () -> Unit,
@@ -136,7 +132,7 @@ private fun AnuSettingsScreen(
     var privacyExpanded by remember { mutableStateOf(false) }
     var controlExpanded by remember { mutableStateOf(false) }
     var permissionsExpanded by remember { mutableStateOf(false) }
-    LaunchedEffect(refreshToken) { }
+    LaunchedEffect(refreshToken) { CapabilityRegistry.snapshot(context) }
 
     Scaffold(containerColor = SettingsBg, topBar = {
         SmallTopAppBar(title = { Column {
@@ -145,6 +141,19 @@ private fun AnuSettingsScreen(
         }}, colors = TopAppBarDefaults.smallTopAppBarColors(containerColor = SettingsBg))
     }) { padding ->
         LazyColumn(modifier = Modifier.fillMaxSize().padding(padding), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            item {
+                Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = AnuLavenderBg), border = androidx.compose.foundation.BorderStroke(1.dp, SettingsBorder), modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.fillMaxWidth().padding(15.dp)) {
+                        Text("Capability health", color = SettingsText, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Spacer(Modifier.height(4.dp))
+                        Text("See which Anu capabilities are actually ready on this phone — not just switched on in Settings.", color = SettingsMuted, fontSize = 11.sp)
+                        Spacer(Modifier.height(10.dp))
+                        Button(onClick = onDiagnostics, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+                            Text("Open Capability Diagnostics", fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
             item { SectionLabel("PERSONALIZATION") }
             item { SettingsCard(Icons.Default.Brightness6, "Appearance", "Theme, motion and visual comfort", appearanceExpanded) { appearanceExpanded = !appearanceExpanded }; AnimatedVisibility(appearanceExpanded) { ExpandPanel { SettingHint("Theme", "New Anu violet & light clean system applied."); Divider(color = SettingsBorder); SettingHint("Motion", "Animations are kept short and responsive to avoid sluggish transitions.") } } }
             item { SettingsCard(Icons.Default.Tune, "Voice & Conversation", "Voice, language and conversation behaviour", false) { } }
