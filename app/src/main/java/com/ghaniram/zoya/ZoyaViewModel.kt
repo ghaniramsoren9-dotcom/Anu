@@ -1,6 +1,11 @@
 package com.ghaniram.zoya
 
+import android.app.AlarmManager
 import android.app.Application
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -31,11 +36,7 @@ class ZoyaViewModel(application: Application) : AndroidViewModel(application) {
                 lower.contains("storage") || lower.contains("device information") ||
                 lower.contains("device info") || lower.contains("phone information") ||
                 lower.contains("phone info") || lower.contains("ମୋ ଫୋନ") || lower.contains("phone")
-            if (deviceRequest) {
-                // DeviceInfoProvider is called inside ZoyaSessionManager. Tell it which
-                // field the user asked for so only that field is returned to Chat/Live.
-                DeviceQueryContext.set(clean)
-            }
+            if (deviceRequest) DeviceQueryContext.set(clean)
             ensureSessionReady()
             ZoyaSessionManager.sendText(clean)
         }
@@ -43,9 +44,7 @@ class ZoyaViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun ensureSessionReady() {
         val current = state.value.connectionState
-        if (current == ConnectionState.DISCONNECTED) {
-            ZoyaSessionManager.connect()
-        }
+        if (current == ConnectionState.DISCONNECTED) ZoyaSessionManager.connect()
         withTimeoutOrNull(12_000L) {
             state.first {
                 it.connectionState == ConnectionState.LISTENING ||
@@ -60,20 +59,39 @@ class ZoyaViewModel(application: Application) : AndroidViewModel(application) {
     fun dismissError() = ZoyaSessionManager.dismissError()
 
     fun addTask(title: String, time: String) {
-        ZoyaSessionManager.addTask(title, time)
-        val task = state.value.tasks.lastOrNull { it.title == title && it.timeLabel == time && !it.isCompleted }
-        if (task != null) AnuTaskAlarmScheduler.schedule(getApplication(), task)
+        val cleanTitle = title.trim()
+        val cleanTime = time.trim()
+        if (cleanTitle.isBlank() || cleanTime.isBlank()) return
+        ZoyaSessionManager.addTask(cleanTitle, cleanTime)
+        // Schedule directly from the exact UI values instead of waiting for StateFlow/repository
+        // propagation. This removes the race that previously produced unscheduled reminders.
+        val task = state.value.tasks.lastOrNull { it.title == cleanTitle && it.timeLabel == cleanTime && !it.isCompleted }
+        val taskId = task?.id ?: "${cleanTitle.hashCode()}_${cleanTime.hashCode()}"
+        AnuTaskAlarmScheduler.schedule(getApplication(), taskId, cleanTitle, cleanTime)
+
+        // On Android 12+, exact alarms require the user's Special App Access. Open it in-context
+        // the first time a precise reminder is requested; the system alarm fallback remains active.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val alarmManager = getApplication<Application>().getSystemService(AlarmManager::class.java)
+            if (alarmManager != null && !alarmManager.canScheduleExactAlarms()) {
+                runCatching {
+                    getApplication<Application>().startActivity(
+                        Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                            data = Uri.parse("package:${getApplication<Application>().packageName}")
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                    )
+                }
+            }
+        }
     }
 
     fun toggleTask(id: String) {
         val task = state.value.tasks.firstOrNull { it.id == id }
         ZoyaSessionManager.toggleTask(id)
         if (task != null) {
-            if (task.isCompleted) {
-                AnuTaskAlarmScheduler.schedule(getApplication(), task.copy(isCompleted = false))
-            } else {
-                AnuTaskAlarmScheduler.cancel(getApplication(), task.id)
-            }
+            if (task.isCompleted) AnuTaskAlarmScheduler.schedule(getApplication(), task.copy(isCompleted = false))
+            else AnuTaskAlarmScheduler.cancel(getApplication(), task.id)
         }
     }
 
@@ -85,11 +103,7 @@ class ZoyaViewModel(application: Application) : AndroidViewModel(application) {
     fun setVisionActive(active: Boolean) = ZoyaSessionManager.setVisionActive(active)
     fun setVisionDescription(desc: String) = ZoyaSessionManager.setVisionDescription(desc)
 
-    /**
-     * One-shot camera analysis is intentionally routed into the SAME Anu Live session.
-     * There is no secondary Gemini vision client anymore: the frame becomes Anu's
-     * visual input and the existing Anu audio pipeline speaks the answer.
-     */
+    /** One-shot camera analysis is routed into the SAME Anu Live session. */
     fun analyzeVisionFrame(jpegBytes: ByteArray, prompt: String, onComplete: ((String) -> Unit)? = null) {
         if (jpegBytes.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
@@ -107,9 +121,7 @@ class ZoyaViewModel(application: Application) : AndroidViewModel(application) {
                     "Use the latest camera frame as your only visual evidence. " +
                     "Answer aloud as Anu. Do not use screen/accessibility data and do not invent anything outside the visible camera frame."
             )
-            withContext(Dispatchers.Main) {
-                onComplete?.invoke("Anu is analyzing the live camera view and will answer aloud.")
-            }
+            withContext(Dispatchers.Main) { onComplete?.invoke("Anu is analyzing the live camera view and will answer aloud.") }
         }
     }
 
