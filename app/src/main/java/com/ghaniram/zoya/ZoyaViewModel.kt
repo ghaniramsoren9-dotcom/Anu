@@ -30,6 +30,13 @@ class ZoyaViewModel(application: Application) : AndroidViewModel(application) {
         val clean = text.trim()
         if (clean.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {
+            // Handle reminder requests locally so Anu never responds that it lacks
+            // permission when the app itself can schedule the reminder.
+            val reminderReply = AnuReminderCommand.trySchedule(getApplication(), clean)
+            if (reminderReply != null) {
+                ZoyaSessionManager.sendText(reminderReply)
+                return@launch
+            }
             val lower = clean.lowercase()
             val deviceRequest = lower.contains("battery") || lower.contains("ବ୍ୟାଟେରୀ") ||
                 lower.contains("cpu") || lower.contains("gpu") || lower.contains("ram") ||
@@ -63,14 +70,9 @@ class ZoyaViewModel(application: Application) : AndroidViewModel(application) {
         val cleanTime = time.trim()
         if (cleanTitle.isBlank() || cleanTime.isBlank()) return
         ZoyaSessionManager.addTask(cleanTitle, cleanTime)
-        // Schedule directly from the exact UI values instead of waiting for StateFlow/repository
-        // propagation. This removes the race that previously produced unscheduled reminders.
         val task = state.value.tasks.lastOrNull { it.title == cleanTitle && it.timeLabel == cleanTime && !it.isCompleted }
         val taskId = task?.id ?: "${cleanTitle.hashCode()}_${cleanTime.hashCode()}"
         AnuTaskAlarmScheduler.schedule(getApplication(), taskId, cleanTitle, cleanTime)
-
-        // On Android 12+, exact alarms require the user's Special App Access. Open it in-context
-        // the first time a precise reminder is requested; the system alarm fallback remains active.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val alarmManager = getApplication<Application>().getSystemService(AlarmManager::class.java)
             if (alarmManager != null && !alarmManager.canScheduleExactAlarms()) {
