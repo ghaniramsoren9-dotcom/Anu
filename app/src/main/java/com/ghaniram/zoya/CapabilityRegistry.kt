@@ -2,9 +2,7 @@ package com.ghaniram.zoya
 
 import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
-import android.app.AppOpsManager
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
@@ -34,10 +32,11 @@ object CapabilityRegistry {
     fun refresh(context: Context): Map<String, Status> {
         val app = context.applicationContext
         val store = AnuSettingsStore.getInstance(app)
+        val connected = ZoyaSessionManager.state.value.connectionState != ConnectionState.DISCONNECTED
 
-        put("agent", "Agent Mode", store.agentMode, ZoyaSessionManager.isConnected(),
-            if (ZoyaSessionManager.isConnected()) State.TRUE else State.PARTIAL,
-            if (ZoyaSessionManager.isConnected()) "Live agent session is connected" else "Agent is enabled but no live session is connected")
+        put("agent", "Agent Mode", true, connected,
+            if (connected) State.TRUE else State.PARTIAL,
+            if (connected) "Live agent session is connected" else "Agent runtime is idle/disconnected")
 
         val accessibility = isAccessibilityEnabled(app)
         put("accessibility", "Accessibility", accessibility, accessibility,
@@ -98,12 +97,12 @@ object CapabilityRegistry {
         put("planner", "Autonomous Task Planner", true, true, State.PARTIAL,
             "Planner creates steps; ZoyaSessionManager remains the execution owner")
 
-        put("whatsapp", "WhatsApp Automation", true, notifications && accessibility,
-            if (notifications && accessibility) State.PARTIAL else State.PARTIAL,
-            "Notification and Accessibility infrastructure is available; workflow coverage remains app-dependent")
+        put("whatsapp", "WhatsApp Automation", true, notifications && accessibility, State.PARTIAL,
+            if (notifications && accessibility) "Notification + Accessibility infrastructure is ready" else "Requires Notification Access and Accessibility")
 
-        put("email", "Email Automation", store.emailAddress.isNotBlank(), false, State.PARTIAL,
-            if (store.emailAddress.isBlank()) "Email account is not configured" else "Email configuration exists; runtime delivery must be verified")
+        val emailConfigured = store.emailAddress.isNotBlank() && store.emailAppPassword.isNotBlank()
+        put("email", "Email Automation", emailConfigured, false, State.PARTIAL,
+            if (emailConfigured) "Email configuration exists; runtime delivery still needs verification" else "Email account/app password is not configured")
 
         return statuses.toMap()
     }
