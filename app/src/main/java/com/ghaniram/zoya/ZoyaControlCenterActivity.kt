@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessibilityNew
 import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.ChevronRight
@@ -61,7 +62,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
@@ -99,16 +99,14 @@ class ZoyaControlCenterActivity : ComponentActivity() {
                     onDnd = { ZoyaCapabilityManager.openNotificationPolicy(this) },
                     onDeviceAdmin = { ZoyaCapabilityManager.openDeviceAdmin(this) },
                     onLocation = { permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)) },
-                    onContacts = { permissionLauncher.launch(arrayOf(Manifest.permission.READ_CONTACTS, Manifest.permission.CALL_PHONE, Manifest.permission.SEND_SMS)) }
+                    onContacts = { permissionLauncher.launch(arrayOf(Manifest.permission.READ_CONTACTS, Manifest.permission.CALL_PHONE, Manifest.permission.SEND_SMS)) },
+                    onBluetooth = { permissionLauncher.launch(arrayOf(Manifest.permission.BLUETOOTH_CONNECT)) }
                 )
             }
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        refreshToken++
-    }
+    override fun onResume() { super.onResume(); refreshToken++ }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -125,7 +123,8 @@ private fun AnuSettingsScreen(
     onDnd: () -> Unit,
     onDeviceAdmin: () -> Unit,
     onLocation: () -> Unit,
-    onContacts: () -> Unit
+    onContacts: () -> Unit,
+    onBluetooth: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var appearanceExpanded by remember { mutableStateOf(false) }
@@ -148,9 +147,7 @@ private fun AnuSettingsScreen(
                         Spacer(Modifier.height(4.dp))
                         Text("See which Anu capabilities are actually ready on this phone — not just switched on in Settings.", color = SettingsMuted, fontSize = 11.sp)
                         Spacer(Modifier.height(10.dp))
-                        Button(onClick = onDiagnostics, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
-                            Text("Open Capability Diagnostics", fontSize = 12.sp)
-                        }
+                        Button(onClick = onDiagnostics, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) { Text("Open Capability Diagnostics", fontSize = 12.sp) }
                     }
                 }
             }
@@ -162,7 +159,7 @@ private fun AnuSettingsScreen(
             item { SectionLabel("PHONE CONTROL") }
             item { SettingsCard(Icons.Default.Security, "Accessibility & Device Control", "Phone actions and automation access", controlExpanded) { controlExpanded = !controlExpanded }; AnimatedVisibility(controlExpanded) { ExpandPanel { ActionRow(Icons.Default.AccessibilityNew, "Accessibility Service", capability(ZoyaCapabilityManager.hasAccessibility(context)), onAccessibility); ActionRow(Icons.Default.Visibility, "Display over other apps", capability(ZoyaCapabilityManager.hasOverlay(context)), onOverlay); ActionRow(Icons.Default.Settings, "Modify system settings", capability(ZoyaCapabilityManager.hasWriteSettings(context)), onWriteSettings); ActionRow(Icons.Default.Alarm, "Exact alarms & reminders", capability(ZoyaCapabilityManager.hasExactAlarms(context)), onAlarms); ActionRow(Icons.Default.FolderOpen, "All files access", capability(ZoyaCapabilityManager.hasAllFiles(context)), onFiles); ActionRow(Icons.Default.DoNotDisturbOn, "Do Not Disturb / Modes", capability(ZoyaCapabilityManager.hasNotificationPolicy(context)), onDnd); ActionRow(Icons.Default.Security, "Device Admin", capability(ZoyaCapabilityManager.hasDeviceAdmin(context)), onDeviceAdmin) } } }
             item { SectionLabel("NOTIFICATIONS & COMMUNICATION") }
-            item { SettingsCard(Icons.Default.NotificationsActive, "Notifications", "Notification access and assistant alerts", permissionsExpanded) { permissionsExpanded = !permissionsExpanded }; AnimatedVisibility(permissionsExpanded) { ExpandPanel { ActionRow(Icons.Default.Notifications, "Notification access", capability(ZoyaCapabilityManager.hasNotificationAccess(context)), onNotifications); ActionRow(Icons.Default.Place, "Location", runtimePermission(context, Manifest.permission.ACCESS_FINE_LOCATION), onLocation); ActionRow(Icons.Default.Contacts, "Contacts", runtimePermission(context, Manifest.permission.READ_CONTACTS), onContacts); ActionRow(Icons.Default.Call, "Phone calls", runtimePermission(context, Manifest.permission.CALL_PHONE), onContacts); ActionRow(Icons.Default.Sms, "SMS", runtimePermission(context, Manifest.permission.SEND_SMS), onContacts) } } }
+            item { SettingsCard(Icons.Default.NotificationsActive, "Notifications", "Notification access and assistant alerts", permissionsExpanded) { permissionsExpanded = !permissionsExpanded }; AnimatedVisibility(permissionsExpanded) { ExpandPanel { ActionRow(Icons.Default.Notifications, "Notification access", capability(ZoyaCapabilityManager.hasNotificationAccess(context)), onNotifications); ActionRow(Icons.Default.Bluetooth, "Bluetooth event access", runtimePermission(context, Manifest.permission.BLUETOOTH_CONNECT), onBluetooth); ActionRow(Icons.Default.Place, "Location", runtimePermission(context, Manifest.permission.ACCESS_FINE_LOCATION), onLocation); ActionRow(Icons.Default.Contacts, "Contacts", runtimePermission(context, Manifest.permission.READ_CONTACTS), onContacts); ActionRow(Icons.Default.Call, "Phone calls", runtimePermission(context, Manifest.permission.CALL_PHONE), onContacts); ActionRow(Icons.Default.Sms, "SMS", runtimePermission(context, Manifest.permission.SEND_SMS), onContacts) } } }
             item { SectionLabel("ABOUT") }
             item { Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = SettingsCard), border = androidx.compose.foundation.BorderStroke(1.dp, SettingsBorder), modifier = Modifier.fillMaxWidth()) { Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Info, null, tint = AnuPrimary, modifier = Modifier.size(22.dp)); Spacer(Modifier.size(12.dp)); Column(Modifier.weight(1f)) { Text("Anu", color = SettingsText, fontWeight = FontWeight.SemiBold, fontSize = 14.sp); Text("ANU Design System • Violet & Light", color = SettingsMuted, fontSize = 10.sp) } } } }
         }
