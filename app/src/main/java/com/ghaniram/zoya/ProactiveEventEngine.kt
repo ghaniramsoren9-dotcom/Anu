@@ -26,14 +26,14 @@ object ProactiveEventEngine {
         val stamp = lastDispatch.getOrPut(key) { AtomicLong(0L) }
         val previous = stamp.get()
         if (now - previous < DEBOUNCE_MS || !stamp.compareAndSet(previous, now)) return
-
-        // Proactive events are not user chat messages. Send them straight to Anu's
-        // Live client so the assistant can speak without dumping event payloads into Chat.
         ProactiveVoiceBridge.dispatch(context, "[PROACTIVE SYSTEM EVENT] $event\n" +
             "Speak to the user proactively in one short, natural sentence. " +
             "Do not claim an action was performed; this is only an event notification. " +
             "Do not mention or display the event payload itself.")
     }
+
+    /** Event monitoring is independent from Proactive Anu/screen awareness. */
+    fun startSystemEventMonitoring(context: Context) = startNetworkMonitor(context.applicationContext)
 
     fun startAmbientScreenAwareness(context: Context) {
         val app = context.applicationContext
@@ -48,15 +48,7 @@ object ProactiveEventEngine {
                     if (store.proactiveAnu) {
                         val snapshot = AccessibilityControlService.instance?.uiSnapshot().orEmpty()
                         if (snapshot.isNotBlank() && snapshot != "{\"package\":\"\",\"elements\":[]}") {
-                            val compact = snapshot.take(12000)
-                            dispatch(
-                                app,
-                                "The user's current screen was observed by Anu's screen-awareness layer. " +
-                                    "Review this UI snapshot and speak only if you can offer genuinely useful help, " +
-                                    "a warning, a relevant suggestion, or a concise observation. Never narrate the whole screen. " +
-                                    "UI snapshot: $compact",
-                                key = "ambient-screen"
-                            )
+                            dispatch(app, "The user's current screen was observed by Anu's screen-awareness layer. Review this UI snapshot and speak only if you can offer genuinely useful help, a warning, a relevant suggestion, or a concise observation. Never narrate the whole screen. UI snapshot: ${snapshot.take(12000)}", "ambient-screen")
                         }
                     }
                 }
@@ -70,28 +62,50 @@ object ProactiveEventEngine {
         if (networkCallback != null) return
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
         val callback = object : ConnectivityManager.NetworkCallback() {
-            private var hasNetwork = false
+            private var currentTransport = -1
+            private var initialized = false
+
             override fun onAvailable(network: Network) {
-                if (!hasNetwork) {
-                    hasNetwork = true
-                    runCatching {
-                        val store = AnuSettingsStore.getInstance(context)
-                        if (store.eventAnnouncementsMaster && store.triggerWifiConnected) {
-                            dispatch(context, "Network connectivity was restored.", "network:available")
-                        }
-                    }
+                // Wait for onCapabilitiesChanged so Wi-Fi vs mobile is known before announcing.
+            }
+
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                val transport = when {
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> NetworkCapabilities.TRANSPORT_WIFI
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> NetworkCapabilities.TRANSPORT_CELLULAR
+                    else -> -1
+                }
+                if (transport == -1) return
+                if (!initialized) {
+                    initialized = true
+                    currentTransport = transport
+                    return
+                }
+                if (transport == currentTransport) return
+                val store = runCatching { AnuSettingsStore.getInstance(context) }.getOrNull() ?: return
+                if (!store.eventAnnouncementsMaster) return
+                if (currentTransport == NetworkCapabilities.TRANSPORT_WIFI && store.triggerWifiLost) {
+                    dispatch(context, "Wi-Fi connectivity was lost.", "wifi:lost")
+                } else if (currentTransport == NetworkCapabilities.TRANSPORT_CELLULAR) {
+                    dispatch(context, "Mobile data connectivity was lost.", "data:lost")
+                }
+                currentTransport = transport
+                if (transport == NetworkCapabilities.TRANSPORT_WIFI && store.triggerWifiConnected) {
+                    dispatch(context, "Wi-Fi connected.", "wifi:connected")
+                } else if (transport == NetworkCapabilities.TRANSPORT_CELLULAR) {
+                    dispatch(context, "Mobile data connected.", "data:connected")
                 }
             }
+
             override fun onLost(network: Network) {
-                hasNetwork = false
-                runCatching {
-                    val store = AnuSettingsStore.getInstance(context)
-                    if (store.eventAnnouncementsMaster && store.triggerWifiLost) {
-                        dispatch(context, "Network connectivity was lost.", "network:lost")
-                    }
+                val store = runCatching { AnuSettingsStore.getInstance(context) }.getOrNull() ?: return
+                if (!store.eventAnnouncementsMaster) return
+                when (currentTransport) {
+                    NetworkCapabilities.TRANSPORT_WIFI -> if (store.triggerWifiLost) dispatch(context, "Wi-Fi connectivity was lost.", "wifi:lost")
+                    NetworkCapabilities.TRANSPORT_CELLULAR -> dispatch(context, "Mobile data connectivity was lost.", "data:lost")
                 }
+                currentTransport = -1
             }
-            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = Unit
         }
         runCatching {
             cm.registerDefaultNetworkCallback(callback)
