@@ -14,13 +14,20 @@ class AnuSettingsRuntimeObserver(context: Context) : SharedPreferences.OnSharedP
     private val appContext = context.applicationContext
     private val prefs = appContext.getSharedPreferences("anu_settings_preferences", Context.MODE_PRIVATE)
     private val handler = Handler(Looper.getMainLooper())
-    private val syncRunnable = Runnable { ZoyaSessionManager.onSettingsUpdated() }
+    private val syncRunnable = Runnable {
+        CapabilityRegistry.refresh(appContext)
+        ZoyaSessionManager.onSettingsUpdated()
+    }
     private val wakeWordManager = WakeWordManager(appContext) { ZoyaSessionManager.connect() }
 
     init {
         prefs.registerOnSharedPreferenceChangeListener(this)
+        CapabilityRegistry.refresh(appContext)
         CoroutineScope(Dispatchers.Main.immediate).launch {
-            ZoyaSessionManager.state.collect { syncWakeWord() }
+            ZoyaSessionManager.state.collect {
+                syncWakeWord()
+                CapabilityRegistry.refresh(appContext)
+            }
         }
     }
 
