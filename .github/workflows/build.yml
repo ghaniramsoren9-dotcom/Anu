@@ -115,3 +115,5 @@ jobs:
           APK="app/build/outputs/apk/debug/app-debug.apk"
           TAG="anu-build-${{ github.run_number }}"
           gh release create "$TAG" "$APK#Anu-debug.apk" --repo "${{ github.repository }}" --title "Anu APK build ${{ github.run_number }}" --notes "Automated Anu debug APK build from commit ${{ github.sha }}." --target "${{ github.sha }}"
+
+# Build trigger: include the latest event, task-alarm, chat-silent proactive and concise-device fixes.
