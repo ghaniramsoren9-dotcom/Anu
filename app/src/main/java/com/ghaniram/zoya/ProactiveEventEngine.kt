@@ -10,15 +10,20 @@ import android.os.SystemClock
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-/** Single runtime bridge for Android events and ambient screen awareness -> Anu voice. */
+/** Autonomous runtime bridge for Android events and contextual screen awareness. */
 object ProactiveEventEngine {
     private const val DEBOUNCE_MS = 2_000L
-    private const val SCREEN_CHECK_MS = 30_000L
+    private const val SCREEN_CHECK_MS = 120_000L
+    private const val PROACTIVE_COOLDOWN_MS = 300_000L
+    private const val IDLE_NUDGE_MS = 420_000L
     private val lastDispatch = ConcurrentHashMap<String, AtomicLong>()
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var ambientRunning = false
     @Volatile private var networkCallback: ConnectivityManager.NetworkCallback? = null
     @Volatile private var networkManager: ConnectivityManager? = null
+    @Volatile private var lastAmbientSnapshot = ""
+    @Volatile private var lastAmbientSpokenAt = 0L
+    @Volatile private var lastUserActivityAt = SystemClock.elapsedRealtime()
 
     fun dispatch(context: Context, event: String, key: String = event) {
         if (event.isBlank()) return
@@ -28,13 +33,18 @@ object ProactiveEventEngine {
         if (now - previous < DEBOUNCE_MS || !stamp.compareAndSet(previous, now)) return
         ProactiveVoiceBridge.dispatch(context, "[PROACTIVE SYSTEM EVENT] $event\n" +
             "Speak to the user proactively in one short, natural sentence. " +
-            "Do not claim an action was performed; this is only an event notification. " +
-            "Do not mention or display the event payload itself.")
+            "Use your own judgment: speak only when this is genuinely useful, relevant, time-sensitive, or helpful. " +
+            "Do not narrate the whole screen. Do not mention or display the event payload itself.")
     }
 
-    /** Event monitoring is independent from Proactive Anu/screen awareness. */
+    /** Event monitoring is independent from screen awareness and Proactive Anu. */
     fun startSystemEventMonitoring(context: Context) = startNetworkMonitor(context.applicationContext)
 
+    /**
+     * Autonomous screen awareness: sample less frequently, require meaningful screen change,
+     * and enforce a quiet period so Anu does not read the screen aloud every 30 seconds.
+     * Anu may still initiate a useful idle nudge when the user has been quiet for a while.
+     */
     fun startAmbientScreenAwareness(context: Context) {
         val app = context.applicationContext
         if (ambientRunning) return
@@ -47,8 +57,21 @@ object ProactiveEventEngine {
                     val store = AnuSettingsStore.getInstance(app)
                     if (store.proactiveAnu) {
                         val snapshot = AccessibilityControlService.instance?.uiSnapshot().orEmpty()
-                        if (snapshot.isNotBlank() && snapshot != "{\"package\":\"\",\"elements\":[]}") {
-                            dispatch(app, "The user's current screen was observed by Anu's screen-awareness layer. Review this UI snapshot and speak only if you can offer genuinely useful help, a warning, a relevant suggestion, or a concise observation. Never narrate the whole screen. UI snapshot: ${snapshot.take(12000)}", "ambient-screen")
+                        val valid = snapshot.isNotBlank() && snapshot != "{\"package\":\"\",\"elements\":[]}"
+                        val now = SystemClock.elapsedRealtime()
+                        val changed = valid && snapshot != lastAmbientSnapshot
+                        val quietEnough = now - lastAmbientSpokenAt >= PROACTIVE_COOLDOWN_MS
+                        if (changed && quietEnough) {
+                            lastAmbientSnapshot = snapshot
+                            lastAmbientSpokenAt = now
+                            dispatch(app,
+                                "The user's current screen changed. Independently decide whether there is genuinely useful help, a warning, a relevant suggestion, or a concise observation to offer. Speak only if warranted. UI snapshot: ${snapshot.take(12000)}",
+                                "ambient-screen")
+                        } else if (now - lastUserActivityAt >= IDLE_NUDGE_MS && now - lastAmbientSpokenAt >= PROACTIVE_COOLDOWN_MS) {
+                            lastAmbientSpokenAt = now
+                            dispatch(app,
+                                "The user has been quiet for several minutes. Independently decide whether a brief helpful check-in is appropriate right now. If not, remain silent.",
+                                "ambient-idle")
                         }
                     }
                 }
@@ -58,6 +81,11 @@ object ProactiveEventEngine {
         handler.post(tick)
     }
 
+    /** Call this whenever the user speaks or sends a message to reset the autonomous idle timer. */
+    fun noteUserActivity() {
+        lastUserActivityAt = SystemClock.elapsedRealtime()
+    }
+
     private fun startNetworkMonitor(context: Context) {
         if (networkCallback != null) return
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
@@ -65,9 +93,7 @@ object ProactiveEventEngine {
             private var currentTransport = -1
             private var initialized = false
 
-            override fun onAvailable(network: Network) {
-                // Wait for onCapabilitiesChanged so Wi-Fi vs mobile is known before announcing.
-            }
+            override fun onAvailable(network: Network) {}
 
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
                 val transport = when {
@@ -122,5 +148,6 @@ object ProactiveEventEngine {
         if (cm != null && callback != null) runCatching { cm.unregisterNetworkCallback(callback) }
         networkCallback = null
         networkManager = null
+        lastAmbientSnapshot = ""
     }
 }
