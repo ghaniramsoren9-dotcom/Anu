@@ -11,8 +11,6 @@ class ZoyaSystemEventReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val action = intent?.action ?: return
         val store = AnuSettingsStore.getInstance(context)
-        // Event Triggers are their own feature. Proactive Anu controls ambient
-        // behaviour/screen awareness and must not disable explicit event announcements.
         if (!store.eventAnnouncementsMaster) return
 
         val event = when (action) {
@@ -23,9 +21,10 @@ class ZoyaSystemEventReceiver : BroadcastReceiver() {
             AudioManager.ACTION_HEADSET_PLUG -> headsetEvent(store, intent)
             android.bluetooth.BluetoothDevice.ACTION_ACL_CONNECTED -> if (store.triggerBluetoothConnected) "A Bluetooth device just connected." else null
             android.bluetooth.BluetoothDevice.ACTION_ACL_DISCONNECTED -> if (store.triggerBluetoothDisconnected) "A Bluetooth device just disconnected." else null
-            android.net.ConnectivityManager.CONNECTIVITY_ACTION -> connectivityEvent(store, intent)
             Intent.ACTION_AIRPLANE_MODE_CHANGED -> airplaneEvent(store, intent)
             AudioManager.RINGER_MODE_CHANGED_ACTION -> ringerEvent(store, intent)
+            // Connectivity is handled by ConnectivityManager.NetworkCallback in
+            // ProactiveEventEngine; don't announce it twice from the deprecated broadcast.
             else -> null
         } ?: return
 
@@ -36,9 +35,7 @@ class ZoyaSystemEventReceiver : BroadcastReceiver() {
         val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
         val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100).coerceAtLeast(1)
         val percent = if (level >= 0) (level * 100 / scale) else -1
-        if (intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1) == BatteryManager.BATTERY_STATUS_FULL && store.triggerBatteryFull) {
-            return "The battery is now full ($percent%)."
-        }
+        if (intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1) == BatteryManager.BATTERY_STATUS_FULL && store.triggerBatteryFull) return "The battery is now full ($percent%)."
         if (percent in 0..9 && store.triggerBatteryCritical) return "The battery is critically low at $percent%."
         if (percent in 10..20 && store.triggerBatteryLow) return "The battery is low at $percent%."
         return null
@@ -48,15 +45,6 @@ class ZoyaSystemEventReceiver : BroadcastReceiver() {
         1 -> if (store.triggerHeadphonesPlugged) "Headphones were just connected." else null
         0 -> if (store.triggerHeadphonesUnplugged) "Headphones were just disconnected." else null
         else -> null
-    }
-
-    private fun connectivityEvent(store: AnuSettingsStore, intent: Intent): String? {
-        val connected = !intent.getBooleanExtra(android.net.ConnectivityManager.EXTRA_NO_CONNECTIVITY, false)
-        return if (connected) {
-            if (store.triggerWifiConnected) "Network connectivity was restored." else null
-        } else {
-            if (store.triggerWifiLost) "Network connectivity was lost." else null
-        }
     }
 
     private fun airplaneEvent(store: AnuSettingsStore, intent: Intent): String? {
