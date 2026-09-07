@@ -21,17 +21,18 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -42,15 +43,26 @@ import com.ghaniram.zoya.ui.theme.ZoyaTheme
 
 class CapabilityDiagnosticsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
-            navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
-        )
         super.onCreate(savedInstanceState)
-        setContent { ZoyaTheme { CapabilityDiagnosticsScreen(onBack = { finish() }) } }
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.TRANSPARENT
+            ),
+            navigationBarStyle = SystemBarStyle.light(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.TRANSPARENT
+            )
+        )
+        setContent {
+            ZoyaTheme {
+                CapabilityDiagnosticsScreen(onBack = { finish() })
+            }
+        }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CapabilityDiagnosticsScreen(onBack: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -59,19 +71,34 @@ private fun CapabilityDiagnosticsScreen(onBack: () -> Unit) {
     val ordered = statuses.values.toList()
     val healthy = ordered.count { it.ready }
     val partial = ordered.count { it.state == CapabilityRegistry.State.PARTIAL }
-    val unavailable = ordered.size - healthy
+    val unavailable = ordered.count { !it.ready }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Column { Text("Capability Diagnostics", fontWeight = FontWeight.Bold, fontSize = 18.sp); Text("Live runtime health", fontSize = 11.sp) } },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
-                actions = { IconButton(onClick = { refreshKey++ }) { Icon(Icons.Default.Refresh, "Refresh") } }
+                title = {
+                    Column {
+                        Text("Capability Diagnostics", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Text("Live runtime health", fontSize = 11.sp)
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { refreshKey++ }) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                    }
+                }
             )
         }
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
@@ -82,14 +109,17 @@ private fun CapabilityDiagnosticsScreen(onBack: () -> Unit) {
                         Spacer(Modifier.height(8.dp))
                         Text("$healthy ready  •  $partial partial  •  $unavailable unavailable", fontSize = 13.sp)
                         Spacer(Modifier.height(4.dp))
-                        Text("This screen reports the actual prerequisites Anu can verify on this device. A setting being ON does not automatically mean its executor is ready.", fontSize = 11.sp)
+                        Text(
+                            "This screen reports prerequisites Anu can verify on this device. A setting being ON does not automatically mean its executor is ready.",
+                            fontSize = 11.sp
+                        )
                     }
                 }
             }
             items(ordered, key = { it.id }) { status -> CapabilityStatusCard(status) }
             item {
                 Button(onClick = { refreshKey++ }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.Refresh, null)
+                    Icon(Icons.Default.Refresh, contentDescription = null)
                     Spacer(Modifier.padding(horizontal = 3.dp))
                     Text("Refresh diagnostics")
                 }
@@ -113,10 +143,17 @@ private fun CapabilityStatusCard(status: CapabilityRegistry.Status) {
         CapabilityRegistry.State.DISABLED -> Color(0xFFDC2626)
     }
     Card {
-        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.Top) {
+        Row(
+            Modifier.fillMaxWidth().padding(14.dp),
+            verticalAlignment = Alignment.Top
+        ) {
             Column(Modifier.weight(1f)) {
                 Text(status.reason.substringBefore(": "), fontWeight = FontWeight.SemiBold)
-                Text(status.reason.substringAfter(": ", status.reason), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    status.reason.substringAfter(": ", status.reason),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
             Text(stateText, color = stateColor, fontWeight = FontWeight.Bold, fontSize = 11.sp)
         }
