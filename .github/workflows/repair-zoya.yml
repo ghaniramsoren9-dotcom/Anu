@@ -1,0 +1,89 @@
+name: One-time Zoya syntax repair
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Repair malformed tool declarations
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt")
+          text = path.read_text()
+
+          replacement = '''    private fun buildToolDeclarations(): JSONArray {
+        fun prop(type: String, description: String) =
+            JSONObject().put("type", type).put("description", description)
+
+        val phone = JSONObject()
+            .put("name", "phoneAction")
+            .put("description", "Execute a phone action. For a selfie ALWAYS use take_selfie; it performs open camera -> front camera -> shutter -> verification.")
+            .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()
+                .put("action", prop("STRING", "take_selfie, camera, phone, messages, settings, flashlight_on, flashlight_off, volume_up, volume_down, brightness_up, brightness_down"))
+            ).put("required", JSONArray().put("action")))
+
+        val appTool = JSONObject()
+            .put("name", "openApp")
+            .put("description", "Open an installed Android app by name.")
+            .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()
+                .put("appName", prop("STRING", "Installed app name"))
+            ).put("required", JSONArray().put("appName")))
+
+        val web = JSONObject()
+            .put("name", "openWebsite")
+            .put("description", "Open a website in the user's browser.")
+            .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()
+                .put("url", prop("STRING", "Full URL"))
+                .put("name", prop("STRING", "Human-readable name"))
+            ).put("required", JSONArray().put("url")))
+
+        val access = JSONObject()
+            .put("name", "accessibilityAction")
+            .put("description", "Use Anu Accessibility to click, type, scroll, or perform global actions.")
+            .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()
+                .put("action", prop("STRING", "click, clicktext, longclick, longclicktext, settext, type, scrollforward, scrollbackward, home, back, recents, notifications, quicksettings, power, lock"))
+                .put("text", prop("STRING", "Visible target label/text"))
+                .put("value", prop("STRING", "Text to enter"))
+            ).put("required", JSONArray().put("action")))
+
+        val device = JSONObject()
+            .put("name", "getDeviceInfo")
+            .put("description", "Read fresh local device information such as battery, RAM, storage, CPU, GPU, India time, and location.")
+            .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+
+        return JSONArray().put(phone).put(appTool).put(web).put(access).put(device)
+    }
+'''
+
+          pattern = re.compile(r'    private fun buildToolDeclarations\(\): JSONArray \{.*?\n    private fun buildSystemInstruction\(\): String \{', re.S)
+          new_text, count = pattern.subn(replacement + '\n    private fun buildSystemInstruction(): String {', text, count=1)
+          if count != 1:
+              raise SystemExit("Could not locate buildToolDeclarations block")
+          if new_text == text:
+              raise SystemExit("No source change produced")
+          path.write_text(new_text)
+          PY
+
+      - name: Commit repaired source and remove one-time workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
+          git rm -f .github/workflows/repair-zoya.yml
+          git commit -m "fix: repair ZoyaSessionManager Kotlin syntax"
+          git push
