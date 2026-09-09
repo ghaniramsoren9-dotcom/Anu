@@ -204,9 +204,7 @@ object ZoyaSessionManager {
         }
     }
 
-    fun onSettingsUpdated() {
-        // No full reconnect here — avoids Settings page thrash.
-    }
+    fun onSettingsUpdated() {}
 
     fun reconnectForCriticalSettings() {
         if (isConnected()) reconnect()
@@ -303,10 +301,21 @@ object ZoyaSessionManager {
                 currentTurnUserMsgId = null
                 currentTurnAnuMsgId = null
                 _state.update { it.copy(isAnuResponding = false) }
+                // modelSpeaking is still true here. Clear AFTER playback drains, then reopen mic.
                 audioEngine?.whenPlaybackDrained {
-                    if (prefs.getBoolean("active", false) && !modelSpeaking) {
+                    if (prefs.getBoolean("active", false) && client != null) {
+                        modelSpeaking = false
                         audioEngine?.startRecording()
-                        _state.update { it.copy(connectionState = ConnectionState.LISTENING) }
+                        _state.update { it.copy(connectionState = ConnectionState.LISTENING, outputLevel = 0f) }
+                    }
+                }
+                // Safety: if drain never fires, force back to listening
+                sessionScope.launch {
+                    kotlinx.coroutines.delay(6000)
+                    if (prefs.getBoolean("active", false) && modelSpeaking && client != null) {
+                        modelSpeaking = false
+                        audioEngine?.startRecording()
+                        _state.update { it.copy(connectionState = ConnectionState.LISTENING, outputLevel = 0f) }
                     }
                 }
             }
