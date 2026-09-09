@@ -13,7 +13,7 @@ import org.json.JSONObject
 import java.util.ArrayDeque
 import java.util.concurrent.TimeUnit
 
-/** Direct Gemini Live API WebSocket client with long-session resumption. */
+/** Direct Gemini Live API WebSocket client with long-session resumption and controlled reconnect. */
 class GeminiLiveClient(
     private val apiKey: String,
     private val model: String = "models/gemini-3.1-flash-live-preview",
@@ -35,10 +35,21 @@ class GeminiLiveClient(
     private var webSocket: WebSocket? = null
     private var setupComplete = false
     private var terminalErrorSent = false
+    private var manualDisconnect = false
+    private var lastSystemInstruction = ""
+    private var lastTools = JSONArray()
+    private var reconnectAttempt = 0
+    private var reconnectScheduled = false
     private val pendingMessages = ArrayDeque<String>()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val setupTimeout = Runnable {
         if (!setupComplete && webSocket != null) fail("Gemini Live setup timed out. Check API key, Live API access, model availability, and internet connection.")
+    }
+    private val reconnectRunnable = Runnable {
+        reconnectScheduled = false
+        if (!manualDisconnect && apiKey.isNotBlank() && lastSystemInstruction.isNotBlank()) {
+            connectInternal(lastSystemInstruction, lastTools)
+        }
     }
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -52,18 +63,28 @@ class GeminiLiveClient(
     }
 
     fun connect(systemInstruction: String, tools: JSONArray) {
+        manualDisconnect = false
+        reconnectAttempt = 0
+        mainHandler.removeCallbacks(reconnectRunnable)
+        reconnectScheduled = false
+        lastSystemInstruction = systemInstruction
+        lastTools = tools
+        connectInternal(systemInstruction, tools)
+    }
+
+    private fun connectInternal(systemInstruction: String, tools: JSONArray) {
         disconnectSilently()
         if (apiKey.isBlank()) {
-            callbacks.onError("Gemini API key is missing. Please add your key in Anu Settings -> Personal.")
+            callbacks.onError("Gemini Live API key is missing. Please add your key in Anu Settings -> Personal.")
             callbacks.onDisconnected()
             return
         }
         setupComplete = false
         terminalErrorSent = false
-        pendingMessages.clear()
         val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$apiKey"
         webSocket = client.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: Response) {
+                reconnectAttempt = 0
                 val setupConfig = JSONObject().apply {
                     put("model", model)
                     put("generationConfig", JSONObject().apply {
@@ -84,7 +105,8 @@ class GeminiLiveClient(
                         systemInstruction +
                             " You are Anu, a proactive personal assistant. You may speak first when a system event or useful screen observation gives you a clear reason to help. Do not invent observations. Keep unsolicited comments short and relevant. " +
                             "For current India time or the user's current device location, call getDeviceInfo and use its India time/location fields as ground truth. " +
-                            "For a request to call a named contact, use accessibilityAction with action=call_contact and text equal to the contact name; do not open the Dialer or merely tell the user to call manually. Execute the tool before claiming the call was placed."
+                            "For a request to call a named contact, use accessibilityAction with action=call_contact and text equal to the contact name; do not open the Dialer or merely tell the user to call manually. Execute the tool before claiming the call was placed. " +
+                            "Never impose an arbitrary 25-second response or cooldown limit. Continue the current turn until it naturally completes or the user interrupts."
                     ))))
                     if (tools.length() > 0) put("tools", JSONArray().put(JSONObject().put("functionDeclarations", tools)))
                 }
@@ -110,8 +132,18 @@ class GeminiLiveClient(
                 setupComplete = false
                 if (webSocket === ws) webSocket = null
                 callbacks.onDisconnected()
+                scheduleReconnectIfNeeded()
             }
         })
+    }
+
+    private fun scheduleReconnectIfNeeded() {
+        if (manualDisconnect || apiKey.isBlank() || lastSystemInstruction.isBlank() || reconnectScheduled) return
+        reconnectScheduled = true
+        val delayMs = minOf(15_000L, 1_000L shl minOf(reconnectAttempt, 4))
+        reconnectAttempt++
+        mainHandler.removeCallbacks(reconnectRunnable)
+        mainHandler.postDelayed(reconnectRunnable, delayMs)
     }
 
     private fun handleServerMessage(text: String) {
@@ -133,6 +165,7 @@ class GeminiLiveClient(
             mainHandler.removeCallbacks(setupTimeout)
             setupComplete = true
             terminalErrorSent = false
+            reconnectAttempt = 0
             callbacks.onConnected()
             flushPendingMessages()
             return
@@ -178,6 +211,7 @@ class GeminiLiveClient(
         webSocket?.cancel()
         webSocket = null
         callbacks.onDisconnected()
+        scheduleReconnectIfNeeded()
     }
 
     private fun enqueueOrSend(message: String) {
@@ -229,12 +263,16 @@ class GeminiLiveClient(
         }))).toString())
     }
 
+    /** Explicit user shutdown. This disables automatic reconnect until connect() is called again. */
     fun disconnect() {
+        manualDisconnect = true
         mainHandler.removeCallbacks(setupTimeout)
+        mainHandler.removeCallbacks(reconnectRunnable)
+        reconnectScheduled = false
         setupComplete = false
         terminalErrorSent = false
         pendingMessages.clear()
-        webSocket?.close(1000, "Client closed")
+        webSocket?.close(1000, "Client closed by user")
         webSocket = null
     }
 
