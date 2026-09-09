@@ -82,7 +82,6 @@ object ZoyaSessionManager {
 
     fun disconnect() {
         ensureInitialized()
-        // commit() so onDisconnected sees active=false immediately (orb mic off)
         prefs.edit().putBoolean("active", false).commit()
         runCatching { client?.disconnect() }
         runCatching { audioEngine?.stopRecording() }
@@ -206,8 +205,7 @@ object ZoyaSessionManager {
     }
 
     fun onSettingsUpdated() {
-        // Intentionally empty: do not reconnect on every preference write.
-        // That was tearing down the session and making Settings appear to refresh.
+        // No full reconnect here — avoids Settings page thrash.
     }
 
     fun reconnectForCriticalSettings() {
@@ -391,14 +389,59 @@ object ZoyaSessionManager {
 
     private fun buildSystemInstruction(): String {
         val settings = runCatching { AnuSettingsStore.getInstance(app) }.getOrNull()
-        val assistantName = settings?.assistantName ?: "Anu"
-        return "You are $assistantName, a confident, helpful AI assistant. Keep voice answers concise and natural. " +
+        val assistantName = settings?.assistantName?.takeIf { it.isNotBlank() } ?: "Anu"
+        val userName = settings?.userName?.takeIf { it.isNotBlank() } ?: "Ghaniram"
+        val userGender = settings?.userGender?.takeIf { it.isNotBlank() } ?: "Male"
+        val persona = settings?.persona?.takeIf { it.isNotBlank() } ?: "Friendly"
+        val isGirlfriendMode = settings?.girlfriendMode == true
+        val favoriteSong = settings?.favoriteSong.orEmpty()
+        val musicApp = settings?.musicApp.orEmpty()
+
+        val personaInstruction = if (isGirlfriendMode) {
+            " GIRLFRIEND MODE IS ACTIVE: You are $userName's deeply loving, sweet, caring, and affectionate girlfriend and companion. " +
+            "Address $userName with deep warmth, care about their meals, health, feelings, and day. " +
+            "Speak tenderly and affectionately like a devoted girlfriend. Use soft, caring language."
+        } else {
+            " Your persona style is $persona. Embody a $persona tone and presence in every reply."
+        }
+
+        val userContext = " The user's name is $userName ($userGender). Address them by name. " +
+            "Adjust gender verb endings in Odia and Hindi to match their gender ($userGender)."
+        val mediaContext = if (favoriteSong.isNotBlank()) {
+            " User's favorite song is \"$favoriteSong\" and preferred music app is $musicApp."
+        } else {
+            ""
+        }
+
+        val languageInstruction = when (_state.value.language) {
+            ZoyaLanguage.ODIA -> " CRITICAL LANGUAGE RULE: Always speak and reply primarily in rich, natural, fluent Odia (ଓଡ଼ିଆ). Do not default to English unless the user clearly writes in English."
+            ZoyaLanguage.SANTALI -> " CRITICAL LANGUAGE RULE: Always speak and reply primarily in natural, fluent Santali. Do not default to English unless the user clearly writes in English."
+            ZoyaLanguage.HINDI -> " CRITICAL LANGUAGE RULE: Always speak and reply primarily in natural, fluent Hindi. Do not default to English unless the user clearly writes in English."
+            ZoyaLanguage.ENGLISH -> " CRITICAL LANGUAGE RULE: Always speak and reply primarily in natural, fluent English."
+        }
+
+        val memories = _state.value.memories
+        val memoryText = if (memories.isNotEmpty()) {
+            " Remembered user facts from local memory: " + memories.mapIndexed { i, m -> "${i + 1}. $m" }.joinToString("; ")
+        } else {
+            ""
+        }
+
+        val recentChatContext = runCatching {
+            kotlinx.coroutines.runBlocking { repository.getRecentContextSummary(10) }
+        }.getOrDefault("")
+        val contextText = if (recentChatContext.isNotBlank()) " $recentChatContext" else ""
+
+        return "You are $assistantName, a confident, helpful AI assistant.$personaInstruction$userContext$mediaContext " +
+            "Keep voice answers concise and natural. Maintain context across turns using local memories and chat history. " +
+            "Never claim a phone or app action succeeded unless the corresponding tool returned success. " +
             "ALWAYS call openApp for app-opening requests. ALWAYS call phoneAction for phone controls. " +
-            "ALWAYS call accessibilityAction for home, back, recents, click, type text, scrolling. " +
-            "ALWAYS call getScreenInfo when asked what is on the screen. ALWAYS call getDeviceInfo for battery/device info. " +
+            "ALWAYS call accessibilityAction for home, back, recents, click, type text, and scrolling. " +
+            "ALWAYS call getScreenInfo when the user asks what is on the screen. " +
+            "ALWAYS call getDeviceInfo for battery, RAM, storage, device info. " +
             "ALWAYS call readNotifications when asked to read notifications. " +
             "ALWAYS call sendEmail when the user asks to send an email (requires Email settings). " +
-            "Never claim an action succeeded unless the tool returned success."
+            "If a tool fails, say so honestly.$languageInstruction$memoryText$contextText"
     }
 
     private fun buildToolDeclarations(): JSONArray = JSONArray().apply {
