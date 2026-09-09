@@ -24,7 +24,6 @@ class AnuSettingsRuntimeObserver(context: Context) : SharedPreferences.OnSharedP
     init {
         prefs.registerOnSharedPreferenceChangeListener(this)
         CapabilityRegistry.refresh(appContext)
-        // Only connectionState changes — NOT every inputLevel/outputLevel tick
         CoroutineScope(Dispatchers.Main.immediate).launch {
             ZoyaSessionManager.state
                 .map { it.connectionState }
@@ -43,8 +42,11 @@ class AnuSettingsRuntimeObserver(context: Context) : SharedPreferences.OnSharedP
         if (key == "bring_wake_word_back" || key == "voice_guardian_on") {
             handler.post { syncWakeWord() }
         }
-        // Only API key / voice speaker should reconnect the live session
-        if (key == "custom_gemini_key" || key == "voice_speaker") {
+        // Settings that change the live system prompt / voice must reconnect
+        if (key == "custom_gemini_key" || key == "voice_speaker" ||
+            key == "persona" || key == "girlfriend_mode" ||
+            key == "assistant_name" || key == "user_name" || key == "user_gender"
+        ) {
             handler.postDelayed({
                 if (ZoyaSessionManager.state.value.connectionState != ConnectionState.DISCONNECTED) {
                     ZoyaSessionManager.reconnectForCriticalSettings()
