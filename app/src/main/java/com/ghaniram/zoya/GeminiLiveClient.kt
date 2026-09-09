@@ -35,15 +35,18 @@ class GeminiLiveClient(
     private var webSocket: WebSocket? = null
     private var setupComplete = false
     private var terminalErrorSent = false
-    private var manualDisconnect = false
+    @Volatile private var manualDisconnect = false
     private var lastSystemInstruction = ""
     private var lastTools = JSONArray()
     private var reconnectAttempt = 0
     private var reconnectScheduled = false
+    private var socketGeneration = 0L
     private val pendingMessages = ArrayDeque<String>()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val setupTimeout = Runnable {
-        if (!setupComplete && webSocket != null) fail("Gemini Live setup timed out. Check API key, Live API access, model availability, and internet connection.")
+        if (!setupComplete && webSocket != null && !manualDisconnect) {
+            fail("Gemini Live setup timed out. Check API key, Live API access, model availability, and internet connection.", socketGeneration)
+        }
     }
     private val reconnectRunnable = Runnable {
         reconnectScheduled = false
@@ -79,11 +82,18 @@ class GeminiLiveClient(
             callbacks.onDisconnected()
             return
         }
+        val generation = ++socketGeneration
         setupComplete = false
         terminalErrorSent = false
         val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$apiKey"
         webSocket = client.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
+            private fun stale(): Boolean = generation != socketGeneration || manualDisconnect
+
             override fun onOpen(ws: WebSocket, response: Response) {
+                if (stale()) {
+                    ws.close(1000, "stale session")
+                    return
+                }
                 reconnectAttempt = 0
                 val setupConfig = JSONObject().apply {
                     put("model", model)
@@ -111,23 +121,32 @@ class GeminiLiveClient(
                     if (tools.length() > 0) put("tools", JSONArray().put(JSONObject().put("functionDeclarations", tools)))
                 }
                 if (!ws.send(JSONObject().put("setup", setupConfig).toString())) {
-                    fail("Could not send Gemini Live setup message.")
+                    fail("Could not send Gemini Live setup message.", generation)
                     return
                 }
                 mainHandler.removeCallbacks(setupTimeout)
                 mainHandler.postDelayed(setupTimeout, 15_000L)
             }
-            override fun onMessage(ws: WebSocket, text: String) { handleServerMessage(text) }
-            override fun onMessage(ws: WebSocket, bytes: ByteString) {
-                val text = bytes.utf8()
-                if (text.trimStart().startsWith("{")) handleServerMessage(text)
+
+            override fun onMessage(ws: WebSocket, text: String) {
+                if (!stale()) handleServerMessage(text, generation)
             }
+
+            override fun onMessage(ws: WebSocket, bytes: ByteString) {
+                if (stale()) return
+                val text = bytes.utf8()
+                if (text.trimStart().startsWith("{")) handleServerMessage(text, generation)
+            }
+
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
+                if (stale()) return
                 mainHandler.removeCallbacks(setupTimeout)
                 val http = response?.let { " HTTP ${it.code}" } ?: ""
-                fail("Gemini Live WebSocket failed$http: ${t.message ?: "unknown network error"}")
+                fail("Gemini Live WebSocket failed$http: ${t.message ?: "unknown network error"}", generation)
             }
+
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
+                if (generation != socketGeneration) return
                 mainHandler.removeCallbacks(setupTimeout)
                 setupComplete = false
                 if (webSocket === ws) webSocket = null
@@ -146,7 +165,8 @@ class GeminiLiveClient(
         mainHandler.postDelayed(reconnectRunnable, delayMs)
     }
 
-    private fun handleServerMessage(text: String) {
+    private fun handleServerMessage(text: String, generation: Long) {
+        if (generation != socketGeneration || manualDisconnect) return
         val json = try { JSONObject(text) } catch (_: Exception) { return }
 
         json.optJSONObject("sessionResumptionUpdate")?.let { update ->
@@ -175,7 +195,7 @@ class GeminiLiveClient(
             val code = if (error.has("code")) " (${error.optInt("code")})" else ""
             val status = error.optString("status")
             val message = error.optString("message").ifBlank { error.toString() }
-            fail("Gemini Live API error$code${if (status.isNotBlank()) " $status" else ""}: $message")
+            fail("Gemini Live API error$code${if (status.isNotBlank()) " $status" else ""}: $message", generation)
             return
         }
 
@@ -201,8 +221,8 @@ class GeminiLiveClient(
         }
     }
 
-    private fun fail(message: String) {
-        if (terminalErrorSent) return
+    private fun fail(message: String, generation: Long) {
+        if (generation != socketGeneration || manualDisconnect || terminalErrorSent) return
         terminalErrorSent = true
         setupComplete = false
         pendingMessages.clear()
@@ -215,7 +235,7 @@ class GeminiLiveClient(
     }
 
     private fun enqueueOrSend(message: String) {
-        if (message.isBlank()) return
+        if (message.isBlank() || manualDisconnect) return
         if (!setupComplete) {
             if (pendingMessages.size < 64) pendingMessages.addLast(message)
             return
@@ -224,11 +244,11 @@ class GeminiLiveClient(
     }
 
     private fun flushPendingMessages() {
-        while (setupComplete && pendingMessages.isNotEmpty()) webSocket?.send(pendingMessages.removeFirst())
+        while (setupComplete && !manualDisconnect && pendingMessages.isNotEmpty()) webSocket?.send(pendingMessages.removeFirst())
     }
 
     fun sendAudioChunk(base64Pcm: String) {
-        if (!setupComplete || base64Pcm.isBlank()) return
+        if (manualDisconnect || !setupComplete || base64Pcm.isBlank()) return
         webSocket?.send(JSONObject().put("realtimeInput", JSONObject().put("audio", JSONObject().apply {
             put("data", base64Pcm)
             put("mimeType", "audio/pcm;rate=16000")
@@ -236,7 +256,7 @@ class GeminiLiveClient(
     }
 
     fun sendVideoFrame(base64Jpeg: String) {
-        if (base64Jpeg.isBlank()) return
+        if (manualDisconnect || base64Jpeg.isBlank()) return
         enqueueOrSend(JSONObject().put("realtimeInput", JSONObject().put("video", JSONObject().apply {
             put("data", base64Jpeg)
             put("mimeType", "image/jpeg")
@@ -244,18 +264,18 @@ class GeminiLiveClient(
     }
 
     fun sendText(text: String) {
-        if (text.isBlank()) return
+        if (manualDisconnect || text.isBlank()) return
         enqueueOrSend(JSONObject().put("realtimeInput", JSONObject().put("text", text)).toString())
     }
 
     fun sendVisionImage(base64Jpeg: String, prompt: String) {
-        if (base64Jpeg.isBlank()) return
+        if (manualDisconnect || base64Jpeg.isBlank()) return
         sendVideoFrame(base64Jpeg)
         sendText(prompt)
     }
 
     fun sendToolResponse(name: String, id: String, output: String) {
-        if (name.isBlank() || id.isBlank()) return
+        if (manualDisconnect || name.isBlank() || id.isBlank()) return
         enqueueOrSend(JSONObject().put("toolResponse", JSONObject().put("functionResponses", JSONArray().put(JSONObject().apply {
             put("name", name)
             put("id", id)
@@ -266,6 +286,7 @@ class GeminiLiveClient(
     /** Explicit user shutdown. This disables automatic reconnect until connect() is called again. */
     fun disconnect() {
         manualDisconnect = true
+        socketGeneration++
         mainHandler.removeCallbacks(setupTimeout)
         mainHandler.removeCallbacks(reconnectRunnable)
         reconnectScheduled = false
@@ -273,6 +294,7 @@ class GeminiLiveClient(
         terminalErrorSent = false
         pendingMessages.clear()
         webSocket?.close(1000, "Client closed by user")
+        webSocket?.cancel()
         webSocket = null
     }
 
