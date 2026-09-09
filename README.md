@@ -22,3 +22,5 @@ A native Kotlin/Jetpack Compose Android AI voice assistant with Gemini Live, pho
 Android special accesses must be explicitly granted by the user. Anu does not silently bypass Android security restrictions. Some capabilities depend on Android version, OEM policy, default-app roles, or supported APIs.
 
 The internal Java/Kotlin package and class names currently retain the historical `com.ghaniram.zoya` namespace to preserve installation/update compatibility with the existing app. Changing the application/package ID would make Android treat it as a different app and would prevent seamless updates.
+
+<!-- Build recovery: keep the last known complete runtime implementation compile-safe. -->
