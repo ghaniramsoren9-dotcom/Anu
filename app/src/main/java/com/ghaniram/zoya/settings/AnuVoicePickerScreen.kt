@@ -1,6 +1,5 @@
 package com.ghaniram.zoya.settings
 
-import android.speech.tts.TextToSpeech
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -25,8 +24,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ghaniram.zoya.AnuSettingsStore
+import com.ghaniram.zoya.GeminiVoicePreview
+import com.ghaniram.zoya.ZoyaSessionManager
 import com.ghaniram.zoya.ui.theme.AnuPrimary
-import java.util.Locale
+import kotlinx.coroutines.launch
 
 data class AnuVoiceOption(
     val tone: String,
@@ -35,8 +36,8 @@ data class AnuVoiceOption(
 )
 
 /**
- * Voice Picker Screen matching Pages 11, 12, 13 of the specification.
- * Interactive previews using Android Text-to-Speech engine.
+ * Voice Picker — previews use real Gemini TTS voices (Aoede, Kore, …),
+ * not the robotic Android system TTS engine.
  */
 @Composable
 fun AnuVoicePickerScreen(
@@ -45,24 +46,14 @@ fun AnuVoicePickerScreen(
 ) {
     val context = LocalContext.current
     val colors = LocalAnuColors.current
+    val scope = rememberCoroutineScope()
     var selectedCategory by remember { mutableStateOf(store.selectedVoiceCategory) }
     var selectedSpeaker by remember { mutableStateOf(store.selectedVoiceSpeaker) }
-    var ttsEngine by remember { mutableStateOf<TextToSpeech?>(null) }
     var isPlayingTone by remember { mutableStateOf<String?>(null) }
+    var previewError by remember { mutableStateOf<String?>(null) }
 
-    // Initialize TTS for realistic preview
     DisposableEffect(Unit) {
-        var tts: TextToSpeech? = null
-        tts = TextToSpeech(context) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                tts?.language = Locale.ENGLISH
-            }
-        }
-        ttsEngine = tts
-        onDispose {
-            tts?.stop()
-            tts?.shutdown()
-        }
+        onDispose { GeminiVoicePreview.stop() }
     }
 
     val anuVoices = listOf(
@@ -117,6 +108,28 @@ fun AnuVoicePickerScreen(
         else -> anuVoices
     }
 
+    fun playGeminiPreview(voice: AnuVoiceOption) {
+        val apiKey = store.customGeminiKey.trim()
+        if (apiKey.isBlank()) {
+            Toast.makeText(context, "Add Gemini API key in Settings → Personal first", Toast.LENGTH_LONG).show()
+            return
+        }
+        isPlayingTone = voice.speaker
+        previewError = null
+        scope.launch {
+            val err = GeminiVoicePreview.playPreview(
+                apiKey = apiKey,
+                voiceName = voice.speaker,
+                phrase = "Hello! I am Anu. How can I help you today?"
+            )
+            isPlayingTone = null
+            if (err != null) {
+                previewError = err
+                Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -132,10 +145,13 @@ fun AnuVoicePickerScreen(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
         ) {
-            Text("Tap to listen, then pick", fontSize = 12.sp, color = colors.textSecondary)
+            Text(
+                "Tap ▶ to hear the real Gemini voice, then pick",
+                fontSize = 12.sp,
+                color = colors.textSecondary
+            )
             Spacer(Modifier.height(14.dp))
 
-            // Category Tabs
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -178,6 +194,7 @@ fun AnuVoicePickerScreen(
         ) {
             items(currentList, key = { "${it.category}_${it.speaker}_${it.tone}" }) { voice ->
                 val isSelected = selectedSpeaker == voice.speaker
+                val isLoading = isPlayingTone == voice.speaker
 
                 Surface(
                     shape = RoundedCornerShape(14.dp),
@@ -193,8 +210,12 @@ fun AnuVoicePickerScreen(
                             store.selectedVoiceCategory = voice.category
                             store.selectedVoiceTone = voice.tone
                             store.selectedVoiceSpeaker = voice.speaker
-                            com.ghaniram.zoya.ZoyaSessionManager.onSettingsUpdated()
-                            Toast.makeText(context, "Selected ${voice.tone} (${voice.speaker})", Toast.LENGTH_SHORT).show()
+                            ZoyaSessionManager.reconnectForCriticalSettings()
+                            Toast.makeText(
+                                context,
+                                "Selected ${voice.tone} (${voice.speaker})",
+                                Toast.LENGTH_SHORT
+                            ).show()
                         }
                 ) {
                     Row(
@@ -218,33 +239,28 @@ fun AnuVoicePickerScreen(
                             )
                         }
 
-                        // Play Preview Button
                         IconButton(
-                            onClick = {
-                                isPlayingTone = voice.speaker
-                                ttsEngine?.let { engine ->
-                                    val phrase = "Hello! I am Anu. How can I help you today?"
-                                    when (voice.tone) {
-                                        "Gentle", "Soft" -> { engine.setPitch(0.9f); engine.setSpeechRate(0.9f) }
-                                        "Upbeat", "Excitable" -> { engine.setPitch(1.2f); engine.setSpeechRate(1.15f) }
-                                        "Firm", "Gravelly" -> { engine.setPitch(0.75f); engine.setSpeechRate(0.95f) }
-                                        "Youthful", "Bright" -> { engine.setPitch(1.3f); engine.setSpeechRate(1.05f) }
-                                        else -> { engine.setPitch(1.0f); engine.setSpeechRate(1.0f) }
-                                    }
-                                    engine.speak(phrase, TextToSpeech.QUEUE_FLUSH, null, "sample_${voice.speaker}")
-                                }
-                            },
+                            onClick = { playGeminiPreview(voice) },
+                            enabled = isPlayingTone == null,
                             modifier = Modifier
                                 .size(34.dp)
                                 .clip(CircleShape)
                                 .background(colors.chipBackground)
                         ) {
-                            Icon(
-                                imageVector = Icons.Filled.PlayArrow,
-                                contentDescription = "Preview voice",
-                                tint = colors.accentPrimary,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            if (isLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = colors.accentPrimary
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Filled.PlayArrow,
+                                    contentDescription = "Preview Gemini voice",
+                                    tint = colors.accentPrimary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
 
                         if (isSelected) {
@@ -271,7 +287,7 @@ fun AnuVoicePickerScreen(
             item {
                 Spacer(Modifier.height(8.dp))
                 SettingsTipBanner(
-                    text = "Applies the next time Anu starts."
+                    text = "Preview uses real Gemini voices (needs internet + API key). Selection applies on next Anu session start."
                 )
             }
         }
