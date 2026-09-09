@@ -5,20 +5,42 @@ import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
+import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 
-/** User-enabled AccessibilityService for explicit global/UI controls and UI understanding. */
+/** User-enabled AccessibilityService for UI controls, screen reading, autonomous help. */
 class AccessibilityControlService : AccessibilityService() {
-    override fun onServiceConnected() { super.onServiceConnected(); instance = this }
-    override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) {
-        TouchGuardRuntime.onAccessibilityEvent(this, event)
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        instance = this
     }
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        TouchGuardRuntime.onAccessibilityEvent(this, event)
+        if (event == null) return
+        when (event.eventType) {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                val pkg = event.packageName?.toString()
+                    ?: rootInActiveWindow?.packageName?.toString()
+                if (!pkg.isNullOrBlank()) {
+                    ProactiveEventEngine.onForegroundAppChanged(applicationContext, pkg)
+                }
+            }
+        }
+    }
+
     override fun onInterrupt() = Unit
-    override fun onDestroy() { if (instance === this) instance = null; super.onDestroy() }
+    override fun onDestroy() {
+        if (instance === this) instance = null
+        super.onDestroy()
+    }
 
     fun currentPackageName(): String? = rootInActiveWindow?.packageName?.toString()
     fun rootNodeForVerification(): AccessibilityNodeInfo? = rootInActiveWindow
-    fun uiSnapshot(): String = runCatching { UiSnapshot.capture(rootInActiveWindow, currentPackageName()).toString() }.getOrDefault("{\"package\":\"\",\"elements\":[]}")
+    fun uiSnapshot(): String = runCatching {
+        UiSnapshot.capture(rootInActiveWindow, currentPackageName()).toString()
+    }.getOrDefault("{\"package\":\"\",\"elements\":[]}")
 
     fun globalAction(action: String): Boolean = when (normalizeAction(action)) {
         "home", "gohome" -> performGlobalAction(GLOBAL_ACTION_HOME)
@@ -63,7 +85,6 @@ class AccessibilityControlService : AccessibilityService() {
         return false
     }
 
-    /** Type text, verify it, then resolve and click an explicit Search/Go/Enter UI target as recovery. */
     fun typeText(value: String): Boolean {
         if (value.isEmpty()) return false
         repeat(3) { attempt ->
@@ -125,7 +146,13 @@ class AccessibilityControlService : AccessibilityService() {
         try { node.getBoundsInScreen(bounds) } catch (_: Exception) { return false }
         if (bounds.isEmpty || bounds.width() <= 0 || bounds.height() <= 0) return false
         val path = Path().apply { moveTo(bounds.exactCenterX(), bounds.exactCenterY()) }
-        return dispatchGesture(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0L, if (longClick) 650L else 1L)).build(), null, null)
+        return dispatchGesture(
+            GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(path, 0L, if (longClick) 650L else 1L))
+                .build(),
+            null,
+            null
+        )
     }
 
     fun scroll(forward: Boolean): Boolean {
@@ -135,7 +162,12 @@ class AccessibilityControlService : AccessibilityService() {
             val node = findScrollable(root)
             var acted = false
             if (node != null) {
-                acted = runCatching { node.performAction(if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD) }.getOrDefault(false)
+                acted = runCatching {
+                    node.performAction(
+                        if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+                        else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+                    )
+                }.getOrDefault(false)
                 if (!acted) acted = performScrollGesture(node, forward)
             }
             if (acted) {
@@ -156,13 +188,20 @@ class AccessibilityControlService : AccessibilityService() {
 
     private fun performScrollGesture(node: AccessibilityNodeInfo, forward: Boolean): Boolean {
         if (Build.VERSION.SDK_INT < 24) return false
-        val bounds = Rect(); runCatching { node.getBoundsInScreen(bounds) }.getOrElse { return false }
+        val bounds = Rect()
+        runCatching { node.getBoundsInScreen(bounds) }.getOrElse { return false }
         if (bounds.isEmpty || bounds.height() < 80 || bounds.width() < 40) return false
         val x = bounds.exactCenterX()
         val startY = if (forward) bounds.bottom - bounds.height() * 0.25f else bounds.top + bounds.height() * 0.25f
         val endY = if (forward) bounds.top + bounds.height() * 0.25f else bounds.bottom - bounds.height() * 0.25f
         val path = Path().apply { moveTo(x, startY); lineTo(x, endY) }
-        return dispatchGesture(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0L, 350L)).build(), null, null)
+        return dispatchGesture(
+            GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(path, 0L, 350L))
+                .build(),
+            null,
+            null
+        )
     }
 
     private fun findScrollable(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
@@ -174,8 +213,14 @@ class AccessibilityControlService : AccessibilityService() {
         return null
     }
 
-    private fun waitForUiSettle(delayMs: Long) { try { Thread.sleep(delayMs.coerceAtMost(450L)) } catch (_: InterruptedException) { Thread.currentThread().interrupt() } }
-    private fun normalizeAction(value: String): String = value.lowercase().replace(Regex("[^a-z0-9]"), "")
+    private fun waitForUiSettle(delayMs: Long) {
+        try { Thread.sleep(delayMs.coerceAtMost(450L)) } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+    }
+
+    private fun normalizeAction(value: String): String =
+        value.lowercase().replace(Regex("[^a-z0-9]"), "")
 
     companion object {
         @Volatile var instance: AccessibilityControlService? = null
