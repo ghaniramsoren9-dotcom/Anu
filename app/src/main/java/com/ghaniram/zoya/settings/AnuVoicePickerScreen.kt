@@ -36,8 +36,7 @@ data class AnuVoiceOption(
 )
 
 /**
- * Voice Picker — previews use real Gemini TTS voices (Aoede, Kore, …),
- * not the robotic Android system TTS engine.
+ * Voice Picker — previews use real Gemini TTS voices (Aoede, Kore, Charon…).
  */
 @Composable
 fun AnuVoicePickerScreen(
@@ -50,12 +49,12 @@ fun AnuVoicePickerScreen(
     var selectedCategory by remember { mutableStateOf(store.selectedVoiceCategory) }
     var selectedSpeaker by remember { mutableStateOf(store.selectedVoiceSpeaker) }
     var isPlayingTone by remember { mutableStateOf<String?>(null) }
-    var previewError by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(Unit) {
         onDispose { GeminiVoicePreview.stop() }
     }
 
+    // Female / soft Gemini voices for Anu persona
     val anuVoices = listOf(
         AnuVoiceOption("Breezy", "Aoede", "Anu"),
         AnuVoiceOption("Firm", "Kore", "Anu"),
@@ -69,9 +68,11 @@ fun AnuVoicePickerScreen(
         AnuVoiceOption("Mature", "Gacrux", "Anu"),
         AnuVoiceOption("Forward", "Pulcherrima", "Anu"),
         AnuVoiceOption("Warm", "Sulafat", "Anu"),
-        AnuVoiceOption("Gentle", "Vindemiatrix", "Anu")
+        AnuVoiceOption("Gentle", "Vindemiatrix", "Anu"),
+        AnuVoiceOption("Soft", "Achernar", "Anu")
     )
 
+    // Assistant-style mix for Friday
     val fridayVoices = listOf(
         AnuVoiceOption("Firm", "Kore", "Friday"),
         AnuVoiceOption("Breezy", "Aoede", "Friday"),
@@ -82,9 +83,12 @@ fun AnuVoicePickerScreen(
         AnuVoiceOption("Clear", "Erinome", "Friday"),
         AnuVoiceOption("Easy-going", "Callirrhoe", "Friday"),
         AnuVoiceOption("Mature", "Gacrux", "Friday"),
-        AnuVoiceOption("Warm", "Sulafat", "Friday")
+        AnuVoiceOption("Warm", "Sulafat", "Friday"),
+        AnuVoiceOption("Informative", "Charon", "Friday"),
+        AnuVoiceOption("Clear", "Iapetus", "Friday")
     )
 
+    // Venom: deeper / male / character Gemini voices (all real API voice names)
     val venomVoices = listOf(
         AnuVoiceOption("Gravelly", "Algenib", "Venom"),
         AnuVoiceOption("Informative", "Charon", "Venom"),
@@ -99,6 +103,8 @@ fun AnuVoicePickerScreen(
         AnuVoiceOption("Even", "Schedar", "Venom"),
         AnuVoiceOption("Casual", "Zubenelgenubi", "Venom"),
         AnuVoiceOption("Lively", "Sadachbia", "Venom"),
+        AnuVoiceOption("Firm", "Alnilam", "Venom"),
+        AnuVoiceOption("Mature", "Sadaltager", "Venom"),
         AnuVoiceOption("Soft", "Achernar", "Venom")
     )
 
@@ -114,17 +120,17 @@ fun AnuVoicePickerScreen(
             Toast.makeText(context, "Add Gemini API key in Settings → Personal first", Toast.LENGTH_LONG).show()
             return
         }
+        // Allow interrupting previous preview
+        GeminiVoicePreview.stop()
         isPlayingTone = voice.speaker
-        previewError = null
         scope.launch {
+            // Short default phrase inside GeminiVoicePreview for low latency
             val err = GeminiVoicePreview.playPreview(
                 apiKey = apiKey,
-                voiceName = voice.speaker,
-                phrase = "Hello! I am Anu. How can I help you today?"
+                voiceName = voice.speaker
             )
-            isPlayingTone = null
+            if (isPlayingTone == voice.speaker) isPlayingTone = null
             if (err != null) {
-                previewError = err
                 Toast.makeText(context, err, Toast.LENGTH_LONG).show()
             }
         }
@@ -146,7 +152,7 @@ fun AnuVoicePickerScreen(
                 .padding(horizontal = 16.dp)
         ) {
             Text(
-                "Tap ▶ to hear the real Gemini voice, then pick",
+                "Tap ▶ for real Gemini voice (cached after first play)",
                 fontSize = 12.sp,
                 color = colors.textSecondary
             )
@@ -241,7 +247,6 @@ fun AnuVoicePickerScreen(
 
                         IconButton(
                             onClick = { playGeminiPreview(voice) },
-                            enabled = isPlayingTone == null,
                             modifier = Modifier
                                 .size(34.dp)
                                 .clip(CircleShape)
@@ -287,7 +292,7 @@ fun AnuVoicePickerScreen(
             item {
                 Spacer(Modifier.height(8.dp))
                 SettingsTipBanner(
-                    text = "Preview uses real Gemini voices (needs internet + API key). Selection applies on next Anu session start."
+                    text = "Real Gemini voices. First ▶ may take 1–2s; next plays are instant (cached). Needs API key + internet."
                 )
             }
         }
