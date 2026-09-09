@@ -7,6 +7,8 @@ import android.os.Looper
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /** Bridges persistent settings changes to the process-wide runtime without restarting the UI/live session. */
@@ -22,11 +24,15 @@ class AnuSettingsRuntimeObserver(context: Context) : SharedPreferences.OnSharedP
     init {
         prefs.registerOnSharedPreferenceChangeListener(this)
         CapabilityRegistry.refresh(appContext)
+        // Only connectionState changes — NOT every inputLevel/outputLevel tick
         CoroutineScope(Dispatchers.Main.immediate).launch {
-            ZoyaSessionManager.state.collect {
-                syncWakeWord()
-                CapabilityRegistry.refresh(appContext)
-            }
+            ZoyaSessionManager.state
+                .map { it.connectionState }
+                .distinctUntilChanged()
+                .collect {
+                    syncWakeWord()
+                    CapabilityRegistry.refresh(appContext)
+                }
         }
     }
 
@@ -37,13 +43,11 @@ class AnuSettingsRuntimeObserver(context: Context) : SharedPreferences.OnSharedP
         if (key == "bring_wake_word_back" || key == "voice_guardian_on") {
             handler.post { syncWakeWord() }
         }
-        // Only settings that fundamentally change the active Live session should reconnect.
-        // Theme, event-trigger, behaviour and UI settings must apply without tearing down
-        // the current Activity/session, otherwise Chat/Settings appear to refresh.
+        // Only API key / voice speaker should reconnect the live session
         if (key == "custom_gemini_key" || key == "voice_speaker") {
             handler.postDelayed({
                 if (ZoyaSessionManager.state.value.connectionState != ConnectionState.DISCONNECTED) {
-                    ZoyaSessionManager.onSettingsUpdated()
+                    ZoyaSessionManager.reconnectForCriticalSettings()
                 }
             }, 500L)
         }
@@ -52,8 +56,6 @@ class AnuSettingsRuntimeObserver(context: Context) : SharedPreferences.OnSharedP
     private fun syncWakeWord() {
         val store = AnuSettingsStore.getInstance(appContext)
         val disconnected = ZoyaSessionManager.state.value.connectionState == ConnectionState.DISCONNECTED
-        // Wake Word is its own feature. Voice Guardian may protect the mic, but it
-        // must not be a prerequisite for wake-word detection.
         if (store.bringWakeWordBack && disconnected) {
             ensureWakeForegroundService()
             wakeWordManager.start()
