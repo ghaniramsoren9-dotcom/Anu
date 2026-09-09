@@ -10,12 +10,16 @@ import android.os.SystemClock
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-/** Autonomous runtime bridge for Android events and contextual screen awareness. */
+/**
+ * Autonomous runtime: system events + ambient screen awareness.
+ * Anu can independently offer help while the user uses any app.
+ */
 object ProactiveEventEngine {
-    private const val DEBOUNCE_MS = 2_000L
-    private const val SCREEN_CHECK_MS = 120_000L
-    private const val PROACTIVE_COOLDOWN_MS = 300_000L
-    private const val IDLE_NUDGE_MS = 420_000L
+    private const val DEBOUNCE_MS = 1_500L
+    private const val SCREEN_CHECK_MS = 45_000L
+    private const val APP_SWITCH_COOLDOWN_MS = 25_000L
+    private const val PROACTIVE_COOLDOWN_MS = 90_000L
+    private const val IDLE_NUDGE_MS = 360_000L
     private val lastDispatch = ConcurrentHashMap<String, AtomicLong>()
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var ambientRunning = false
@@ -24,6 +28,7 @@ object ProactiveEventEngine {
     @Volatile private var lastAmbientSnapshot = ""
     @Volatile private var lastAmbientSpokenAt = 0L
     @Volatile private var lastUserActivityAt = SystemClock.elapsedRealtime()
+    @Volatile private var lastPackage = ""
 
     fun dispatch(context: Context, event: String, key: String = event) {
         if (event.isBlank()) return
@@ -31,20 +36,45 @@ object ProactiveEventEngine {
         val stamp = lastDispatch.getOrPut(key) { AtomicLong(0L) }
         val previous = stamp.get()
         if (now - previous < DEBOUNCE_MS || !stamp.compareAndSet(previous, now)) return
-        ProactiveVoiceBridge.dispatch(context, "[PROACTIVE SYSTEM EVENT] $event\n" +
-            "Speak to the user proactively in one short, natural sentence. " +
-            "Use your own judgment: speak only when this is genuinely useful, relevant, time-sensitive, or helpful. " +
-            "Do not narrate the whole screen. Do not mention or display the event payload itself.")
+        ProactiveVoiceBridge.dispatch(
+            context,
+            "[PROACTIVE SYSTEM EVENT] $event\n" +
+                "Speak to the user proactively in one short, natural sentence. " +
+                "Use judgment: speak only when genuinely useful. Do not narrate the whole screen. " +
+                "Do not mention this system event label."
+        )
     }
 
-    /** Event monitoring is independent from screen awareness and Proactive Anu. */
     fun startSystemEventMonitoring(context: Context) = startNetworkMonitor(context.applicationContext)
 
     /**
-     * Autonomous screen awareness: sample less frequently, require meaningful screen change,
-     * and enforce a quiet period so Anu does not read the screen aloud every 30 seconds.
-     * Anu may still initiate a useful idle nudge when the user has been quiet for a while.
+     * Called from AccessibilityService when the foreground app/window changes.
+     * Lets Anu offer contextual help while the user is using any app.
      */
+    fun onForegroundAppChanged(context: Context, packageName: String?) {
+        val pkg = packageName?.trim().orEmpty()
+        if (pkg.isBlank() || pkg == lastPackage) return
+        lastPackage = pkg
+        noteUserActivity()
+        val store = runCatching { AnuSettingsStore.getInstance(context) }.getOrNull() ?: return
+        if (!store.proactiveAnu) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastAmbientSpokenAt < APP_SWITCH_COOLDOWN_MS) return
+
+        val snapshot = AccessibilityControlService.instance?.uiSnapshot().orEmpty()
+        if (snapshot.isBlank() || snapshot == "{\"package\":\"\",\"elements\":[]}") return
+
+        lastAmbientSnapshot = snapshot
+        lastAmbientSpokenAt = now
+        dispatch(
+            context,
+            "The user just opened or switched to app package `$pkg`. " +
+                "Independently decide if a short, useful tip, warning, or suggestion helps right now. " +
+                "If nothing useful, stay silent. UI snapshot: ${snapshot.take(10000)}",
+            key = "app-switch:$pkg"
+        )
+    }
+
     fun startAmbientScreenAwareness(context: Context) {
         val app = context.applicationContext
         if (ambientRunning) return
@@ -64,24 +94,31 @@ object ProactiveEventEngine {
                         if (changed && quietEnough) {
                             lastAmbientSnapshot = snapshot
                             lastAmbientSpokenAt = now
-                            dispatch(app,
-                                "The user's current screen changed. Independently decide whether there is genuinely useful help, a warning, a relevant suggestion, or a concise observation to offer. Speak only if warranted. UI snapshot: ${snapshot.take(12000)}",
-                                "ambient-screen")
-                        } else if (now - lastUserActivityAt >= IDLE_NUDGE_MS && now - lastAmbientSpokenAt >= PROACTIVE_COOLDOWN_MS) {
+                            dispatch(
+                                app,
+                                "The user's screen content changed. Independently offer a short useful tip or warning only if warranted. " +
+                                    "Stay silent if nothing important. UI snapshot: ${snapshot.take(12000)}",
+                                "ambient-screen"
+                            )
+                        } else if (now - lastUserActivityAt >= IDLE_NUDGE_MS &&
+                            now - lastAmbientSpokenAt >= PROACTIVE_COOLDOWN_MS
+                        ) {
                             lastAmbientSpokenAt = now
-                            dispatch(app,
-                                "The user has been quiet for several minutes. Independently decide whether a brief helpful check-in is appropriate right now. If not, remain silent.",
-                                "ambient-idle")
+                            dispatch(
+                                app,
+                                "The user has been quiet for several minutes. " +
+                                    "Independently decide whether a brief helpful check-in is appropriate. If not, remain silent.",
+                                "ambient-idle"
+                            )
                         }
                     }
                 }
                 handler.postDelayed(this, SCREEN_CHECK_MS)
             }
         }
-        handler.post(tick)
+        handler.postDelayed(tick, 8_000L)
     }
 
-    /** Call this whenever the user speaks or sends a message to reset the autonomous idle timer. */
     fun noteUserActivity() {
         lastUserActivityAt = SystemClock.elapsedRealtime()
     }
@@ -127,8 +164,10 @@ object ProactiveEventEngine {
                 val store = runCatching { AnuSettingsStore.getInstance(context) }.getOrNull() ?: return
                 if (!store.eventAnnouncementsMaster) return
                 when (currentTransport) {
-                    NetworkCapabilities.TRANSPORT_WIFI -> if (store.triggerWifiLost) dispatch(context, "Wi-Fi connectivity was lost.", "wifi:lost")
-                    NetworkCapabilities.TRANSPORT_CELLULAR -> dispatch(context, "Mobile data connectivity was lost.", "data:lost")
+                    NetworkCapabilities.TRANSPORT_WIFI ->
+                        if (store.triggerWifiLost) dispatch(context, "Wi-Fi connectivity was lost.", "wifi:lost")
+                    NetworkCapabilities.TRANSPORT_CELLULAR ->
+                        dispatch(context, "Mobile data connectivity was lost.", "data:lost")
                 }
                 currentTransport = -1
             }
@@ -149,5 +188,6 @@ object ProactiveEventEngine {
         networkCallback = null
         networkManager = null
         lastAmbientSnapshot = ""
+        lastPackage = ""
     }
 }
