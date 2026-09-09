@@ -38,6 +38,7 @@ class AnuApplication : Application() {
             }
         }
         ProactiveEventEngine.startSystemEventMonitoring(this)
-        LiveConnectionWatchdog.start(this)
+        // Do not start LiveConnectionWatchdog here. It is session-owned and is started
+        // only when the user explicitly turns Anu ON/restores an active session.
     }
 }
