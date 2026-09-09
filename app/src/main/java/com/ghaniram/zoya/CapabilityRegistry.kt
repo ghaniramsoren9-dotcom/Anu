@@ -97,12 +97,23 @@ object CapabilityRegistry {
         put("planner", "Autonomous Task Planner", true, true, State.PARTIAL,
             "Planner creates steps; ZoyaSessionManager remains the execution owner")
 
-        put("whatsapp", "WhatsApp Automation", true, notifications && accessibility, State.PARTIAL,
-            if (notifications && accessibility) "Notification + Accessibility infrastructure is ready" else "Requires Notification Access and Accessibility")
+        val whatsappReady = notifications && store.whatsAppAutoReplyEnabled
+        put("whatsapp", "WhatsApp Automation", store.whatsAppAutoReplyEnabled, whatsappReady,
+            when {
+                !store.whatsAppAutoReplyEnabled -> State.DISABLED
+                !notifications -> State.PARTIAL
+                else -> State.TRUE
+            },
+            when {
+                !store.whatsAppAutoReplyEnabled -> "WhatsApp auto-reply is OFF in Settings"
+                !notifications -> "Enable Notification Access for WhatsApp auto-reply"
+                else -> "WhatsApp auto-reply is active"
+            })
 
         val emailConfigured = store.emailAddress.isNotBlank() && store.emailAppPassword.isNotBlank()
-        put("email", "Email Automation", emailConfigured, false, State.PARTIAL,
-            if (emailConfigured) "Email configuration exists; runtime delivery still needs verification" else "Email account/app password is not configured")
+        put("email", "Email Automation", emailConfigured, emailConfigured,
+            if (emailConfigured) State.TRUE else State.DISABLED,
+            if (emailConfigured) "Email SMTP is configured and ready" else "Email account/app password is not configured")
 
         return statuses.toMap()
     }
