@@ -1,10 +1,11 @@
 package com.ghaniram.zoya
 
+import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
- * Lightweight conversational delivery cue. This is not emotion or mental-health diagnosis.
- * It only summarizes current PCM energy/zero-crossing characteristics for response style.
+ * Lightweight conversational delivery estimator. It is deliberately framed as a cue,
+ * not an emotion/mental-health diagnosis. It uses only the current PCM microphone frame.
  */
 enum class VoiceTone(val label: String) {
     CALM("calm"),
@@ -13,6 +14,9 @@ enum class VoiceTone(val label: String) {
     URGENT("urgent"),
     STRAINED("strained")
 }
+
+// Shared delivery-cue guard used by the session audio callback.
+var lastSentVoiceTone: VoiceTone? = null
 
 data class VoiceToneSnapshot(
     val tone: VoiceTone = VoiceTone.NEUTRAL,
