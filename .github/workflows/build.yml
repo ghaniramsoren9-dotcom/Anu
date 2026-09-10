@@ -2,7 +2,9 @@ name: Build Anu APK
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+      - 'feature/**'
   workflow_dispatch:
 
 permissions:
@@ -116,4 +118,4 @@ jobs:
           TAG="anu-build-${{ github.run_number }}"
           gh release create "$TAG" "$APK#Anu-debug.apk" --repo "${{ github.repository }}" --title "Anu APK build ${{ github.run_number }}" --notes "Automated Anu debug APK build from commit ${{ github.sha }}." --target "${{ github.sha }}"
 
-# Build trigger: include the latest event, task-alarm, chat-silent proactive and concise-device fixes.
+# Build trigger: include feature branches so implementation commits are automatically verified.
