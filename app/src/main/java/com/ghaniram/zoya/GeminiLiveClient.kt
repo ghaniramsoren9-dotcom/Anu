@@ -35,14 +35,8 @@ class GeminiLiveClient(
     private var webSocket: WebSocket? = null
     private var setupComplete = false
     private var terminalErrorSent = false
-    private var awaitingResponse = false
     private val pendingMessages = ArrayDeque<String>()
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val responseWatchdog = Runnable {
-        if (setupComplete && awaitingResponse && webSocket != null) {
-            fail("Gemini Live stopped responding; recovering the live session…")
-        }
-    }
     private val setupTimeout = Runnable {
         if (!setupComplete && webSocket != null) fail("Gemini Live setup timed out. Check API key, Live API access, model availability, and internet connection.")
     }
@@ -66,7 +60,6 @@ class GeminiLiveClient(
         }
         setupComplete = false
         terminalErrorSent = false
-        awaitingResponse = false
         pendingMessages.clear()
         val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$apiKey"
         webSocket = client.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
@@ -106,9 +99,7 @@ class GeminiLiveClient(
             }
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
                 mainHandler.removeCallbacks(setupTimeout)
-                mainHandler.removeCallbacks(responseWatchdog)
                 setupComplete = false
-                awaitingResponse = false
                 if (webSocket === ws) webSocket = null
                 callbacks.onDisconnected()
             }
@@ -121,7 +112,9 @@ class GeminiLiveClient(
             if (update.optBoolean("resumable", false)) update.optString("newHandle").takeIf { it.isNotBlank() }?.let { latestResumptionHandle = it }
         }
         json.optJSONObject("goAway")?.let {
-            callbacks.onError("Gemini Live connection is ending; reconnecting Anu…")
+            // The Live service can ask clients to leave a session. The session manager
+            // reconnects with the latest resumption handle; this is not a user stop.
+            callbacks.onError("Gemini Live session is renewing; reconnecting Anu…")
             webSocket?.close(1000, "Live API GoAway")
             return
         }
@@ -129,7 +122,6 @@ class GeminiLiveClient(
             mainHandler.removeCallbacks(setupTimeout)
             setupComplete = true
             terminalErrorSent = false
-            awaitingResponse = false
             callbacks.onConnected()
             flushPendingMessages()
             return
@@ -142,22 +134,23 @@ class GeminiLiveClient(
             return
         }
         json.optJSONObject("serverContent")?.let { content ->
-            if (content.optBoolean("interrupted", false)) { awaitingResponse = false; mainHandler.removeCallbacks(responseWatchdog); callbacks.onInterrupted() }
+            if (content.optBoolean("interrupted", false)) callbacks.onInterrupted()
             content.optJSONObject("modelTurn")?.optJSONArray("parts")?.let { parts ->
                 for (i in 0 until parts.length()) {
                     val part = parts.optJSONObject(i) ?: continue
-                    part.optString("text").takeIf { it.isNotBlank() }?.let { awaitingResponse = false; mainHandler.removeCallbacks(responseWatchdog); callbacks.onModelText(it) }
-                    part.optJSONObject("inlineData")?.optString("data")?.takeIf { it.isNotBlank() }?.let { awaitingResponse = false; mainHandler.removeCallbacks(responseWatchdog); callbacks.onAudioChunk(it) }
+                    part.optString("text").takeIf { it.isNotBlank() }?.let { callbacks.onModelText(it) }
+                    part.optJSONObject("inlineData")?.optString("data")?.takeIf { it.isNotBlank() }?.let { callbacks.onAudioChunk(it) }
                 }
             }
-            content.optJSONObject("outputTranscription")?.optString("text")?.takeIf { it.isNotBlank() }?.let { awaitingResponse = false; mainHandler.removeCallbacks(responseWatchdog); callbacks.onModelText(it) }
-            content.optJSONObject("inputTranscription")?.optString("text")?.takeIf { it.isNotBlank() }?.let { callbacks.onUserText(it); awaitingResponse = true; mainHandler.removeCallbacks(responseWatchdog); mainHandler.postDelayed(responseWatchdog, 30_000L) }
-            if (content.optBoolean("turnComplete", false)) { awaitingResponse = false; mainHandler.removeCallbacks(responseWatchdog); callbacks.onTurnComplete() }
+            content.optJSONObject("outputTranscription")?.optString("text")?.takeIf { it.isNotBlank() }?.let { callbacks.onModelText(it) }
+            content.optJSONObject("inputTranscription")?.optString("text")?.takeIf { it.isNotBlank() }?.let { callbacks.onUserText(it) }
+            if (content.optBoolean("turnComplete", false)) callbacks.onTurnComplete()
         }
         json.optJSONObject("toolCall")?.optJSONArray("functionCalls")?.let { calls ->
-            awaitingResponse = false
-            mainHandler.removeCallbacks(responseWatchdog)
-            for (i in 0 until calls.length()) { val call = calls.optJSONObject(i) ?: continue; callbacks.onToolCall(call.optString("name"), call.optJSONObject("args") ?: JSONObject(), call.optString("id")) }
+            for (i in 0 until calls.length()) {
+                val call = calls.optJSONObject(i) ?: continue
+                callbacks.onToolCall(call.optString("name"), call.optJSONObject("args") ?: JSONObject(), call.optString("id"))
+            }
         }
     }
 
@@ -165,10 +158,8 @@ class GeminiLiveClient(
         if (terminalErrorSent) return
         terminalErrorSent = true
         setupComplete = false
-        awaitingResponse = false
         pendingMessages.clear()
         mainHandler.removeCallbacks(setupTimeout)
-        mainHandler.removeCallbacks(responseWatchdog)
         callbacks.onError(message)
         webSocket?.cancel()
         webSocket = null
@@ -207,10 +198,8 @@ class GeminiLiveClient(
 
     fun disconnect() {
         mainHandler.removeCallbacks(setupTimeout)
-        mainHandler.removeCallbacks(responseWatchdog)
         setupComplete = false
         terminalErrorSent = false
-        awaitingResponse = false
         pendingMessages.clear()
         webSocket?.close(1000, "Client closed")
         webSocket = null
@@ -218,9 +207,7 @@ class GeminiLiveClient(
 
     private fun disconnectSilently() {
         mainHandler.removeCallbacks(setupTimeout)
-        mainHandler.removeCallbacks(responseWatchdog)
         setupComplete = false
-        awaitingResponse = false
         pendingMessages.clear()
         webSocket?.cancel()
         webSocket = null
