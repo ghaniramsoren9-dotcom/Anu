@@ -2,11 +2,15 @@ package com.ghaniram.zoya
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.graphics.Bitmap
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.annotation.RequiresApi
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.Executors
 
 /** User-enabled AccessibilityService for UI controls, screen reading, autonomous help. */
 class AccessibilityControlService : AccessibilityService() {
@@ -26,6 +30,43 @@ class AccessibilityControlService : AccessibilityService() {
     fun currentPackageName(): String? = rootInActiveWindow?.packageName?.toString()
     fun rootNodeForVerification(): AccessibilityNodeInfo? = rootInActiveWindow
     fun uiSnapshot(): String = runCatching { UiSnapshot.capture(rootInActiveWindow, currentPackageName()).toString() }.getOrDefault("{\"package\":\"\",\"elements\":[]}")
+
+    /**
+     * Captures the actual device display, not just the accessibility node tree.
+     * This is what lets Anu visually inspect image/video frames and games whose
+     * pixels are not exposed as AccessibilityNodeInfo (Android 11+).
+     */
+    fun captureScreenJpeg(onCaptured: (ByteArray) -> Unit) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) { onCaptured(ByteArray(0)); return }
+        captureScreenJpegApi30(onCaptured)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.R)
+    private fun captureScreenJpegApi30(onCaptured: (ByteArray) -> Unit) {
+        runCatching {
+            takeScreenshot(
+                displayId,
+                Executors.newSingleThreadExecutor(),
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(screenshot: ScreenshotResult) {
+                        val bytes = runCatching {
+                            val hardwareBuffer = screenshot.hardwareBuffer
+                            val bitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, screenshot.colorSpace)
+                            hardwareBuffer.close()
+                            if (bitmap == null) ByteArray(0) else ByteArrayOutputStream().use { out ->
+                                bitmap.copy(Bitmap.Config.ARGB_8888, false).compress(Bitmap.CompressFormat.JPEG, 72, out)
+                                bitmap.recycle()
+                                out.toByteArray()
+                            }
+                        }.getOrDefault(ByteArray(0))
+                        onCaptured(bytes)
+                    }
+                    override fun onFailure(errorCode: Int) { onCaptured(ByteArray(0)) }
+                }
+            )
+        }.onFailure { onCaptured(ByteArray(0)) }
+    }
+
     fun globalAction(action: String): Boolean = when (normalizeAction(action)) {
         "home", "gohome" -> performGlobalAction(GLOBAL_ACTION_HOME); "back", "goback" -> performGlobalAction(GLOBAL_ACTION_BACK)
         "recents", "recentapps", "openrecentapps" -> performGlobalAction(GLOBAL_ACTION_RECENTS); "notifications", "opennotifications" -> performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
