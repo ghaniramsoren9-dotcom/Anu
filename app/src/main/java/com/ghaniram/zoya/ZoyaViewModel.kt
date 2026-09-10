@@ -67,6 +67,7 @@ class ZoyaViewModel(application: Application) : AndroidViewModel(application) {
     fun clearMemories() = ZoyaSessionManager.clearMemories()
     fun clearChatHistory() = ZoyaSessionManager.clearChatHistory()
     fun dismissError() = ZoyaSessionManager.dismissError()
+    fun performDynamicUiAction(action: DynamicUiAction) = ZoyaSessionManager.performDynamicUiAction(action)
 
     fun addTask(title: String, time: String) {
         val cleanTitle = title.trim()
