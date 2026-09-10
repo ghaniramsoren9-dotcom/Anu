@@ -1,5 +1,3 @@
-package com.ghaniram.zoya
-
 enum class ConnectionState { DISCONNECTED, CONNECTING, IDLE, LISTENING, SPEAKING }
 
 enum class ZoyaLanguage(val code: String, val label: String) {
@@ -36,5 +34,7 @@ data class ZoyaUiState(
     ),
     val visionDescription: String = "",
     val isVisionActive: Boolean = false,
-    val isAnuResponding: Boolean = false
+    val isAnuResponding: Boolean = false,
+    val dynamicUi: DynamicUiSpec? = null,
+    val voiceTone: VoiceToneSnapshot = VoiceToneSnapshot()
 )
