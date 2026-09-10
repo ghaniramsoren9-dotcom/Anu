@@ -10,7 +10,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 
-/** Keeps the process alive and restores the process-wide Anu session after task/process recreation. */
+/** Keeps the process alive while an explicit Anu voice session is active. */
 class ZoyaForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
@@ -67,7 +67,11 @@ class ZoyaForegroundService : Service() {
 
         ZoyaSessionManager.initialize(application)
         ProactiveEventEngine.startAmbientScreenAwareness(application)
-        if (intent?.action == ACTION_START || intent?.action == ACTION_WAKE_WORD || intent == null) {
+
+        // IMPORTANT: Android may restart a START_STICKY service with a null intent.
+        // A null restart is NOT a user request to turn Anu's microphone on.
+        // Only explicit user/system actions may restore a voice session.
+        if (intent?.action == ACTION_START || intent?.action == ACTION_WAKE_WORD) {
             ZoyaSessionManager.restoreIfNeeded()
         }
         return START_STICKY
