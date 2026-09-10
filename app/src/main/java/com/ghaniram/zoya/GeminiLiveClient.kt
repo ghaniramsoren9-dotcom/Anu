@@ -10,6 +10,7 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.MessageDigest
 import java.util.ArrayDeque
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
@@ -40,6 +41,7 @@ class GeminiLiveClient(
     private val pendingMessages = ArrayDeque<String>()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var screenVisionExecutor: ScheduledExecutorService? = null
+    @Volatile private var lastScreenFrameHash: String? = null
     private val setupTimeout = Runnable {
         if (!setupComplete && webSocket != null) fail("Gemini Live setup timed out. Check API key, Live API access, model availability, and internet connection.")
     }
@@ -124,6 +126,7 @@ class GeminiLiveClient(
             mainHandler.removeCallbacks(setupTimeout)
             setupComplete = true
             terminalErrorSent = false
+            lastScreenFrameHash = null
             callbacks.onConnected()
             flushPendingMessages()
             startScreenVision()
@@ -157,7 +160,7 @@ class GeminiLiveClient(
         }
     }
 
-    /** Start low-rate pixel sampling from the user's enabled AccessibilityService. */
+    /** Low-bandwidth pixel sampling for screen understanding. Static frames are not re-uploaded. */
     private fun startScreenVision() {
         stopScreenVision()
         screenVisionExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
@@ -167,17 +170,25 @@ class GeminiLiveClient(
                 if (!setupComplete) return@scheduleWithFixedDelay
                 AccessibilityControlService.instance?.captureScreenJpeg { bytes ->
                     if (bytes.isNotEmpty() && setupComplete) {
+                        val hash = sha256(bytes)
+                        if (hash == lastScreenFrameHash) return@captureScreenJpeg
+                        lastScreenFrameHash = hash
                         val base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
                         sendVideoFrame(base64)
                     }
                 }
-            }, 300L, 1200L, TimeUnit.MILLISECONDS)
+            }, 500L, 2200L, TimeUnit.MILLISECONDS)
         }
     }
+
+    private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
+        .digest(bytes)
+        .joinToString("") { "%02x".format(it) }
 
     private fun stopScreenVision() {
         screenVisionExecutor?.shutdownNow()
         screenVisionExecutor = null
+        lastScreenFrameHash = null
     }
 
     private fun fail(message: String) {
