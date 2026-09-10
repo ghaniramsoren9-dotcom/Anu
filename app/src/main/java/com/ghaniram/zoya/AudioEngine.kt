@@ -10,18 +10,24 @@ import android.media.MediaRecorder
 import android.os.Handler
 import android.os.Looper
 import android.util.Base64
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 import kotlin.math.min
 
-/** Dedicated PCM capture/playback engine. Assistant speech uses media routing (loudspeaker). */
+/** Dedicated PCM capture/playback engine. Gemini Live is the only speech synthesis path. */
 class AudioEngine(
     private val onMicChunkBase64: (String) -> Unit,
     private val onInputLevel: (Float) -> Unit,
-    private val onOutputLevel: (Float) -> Unit
+    private val onOutputLevel: (Float) -> Unit,
+    private val onVoiceTone: (VoiceToneSnapshot) -> Unit = {}
 ) {
     private val scope = CoroutineScope(Dispatchers.Default)
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -32,8 +38,12 @@ class AudioEngine(
     private val playbackQueue = LinkedBlockingQueue<ByteArray>()
     private val pendingPlaybackBytes = AtomicLong(0L)
     private val totalFramesWritten = AtomicLong(0L)
+    private val toneEstimator = VoiceToneEstimator()
 
-    companion object { const val INPUT_SAMPLE_RATE = 16000; const val OUTPUT_SAMPLE_RATE = 24000 }
+    companion object {
+        const val INPUT_SAMPLE_RATE = 16000
+        const val OUTPUT_SAMPLE_RATE = 24000
+    }
 
     @SuppressLint("MissingPermission")
     fun startRecording() {
@@ -52,6 +62,7 @@ class AudioEngine(
                     var sum = 0.0
                     for (i in 0 until read) sum += abs(buffer[i].toInt())
                     onInputLevel(min(1f, ((sum / read).toFloat() / Short.MAX_VALUE) * 6f))
+                    onVoiceTone(toneEstimator.update(buffer, read))
                     onMicChunkBase64(Base64.encodeToString(shortsToBytes(buffer, read), Base64.NO_WRAP))
                 }
             }
@@ -108,11 +119,6 @@ class AudioEngine(
         } catch (_: Exception) {}
     }
 
-    /**
-     * Wait until queued PCM has drained. A bounded safety window prevents a broken
-     * AudioTrack from leaving Anu permanently in SPEAKING state. This is NOT a
-     * response-generation timeout; it only protects the local playback state.
-     */
     fun whenPlaybackDrained(callback: () -> Unit) {
         scope.launch(Dispatchers.Default) {
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8)
