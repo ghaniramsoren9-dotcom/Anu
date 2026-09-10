@@ -49,7 +49,8 @@ class AudioEngine(
             while (isActive && audioRecord === record) {
                 val read = try { record.read(buffer, 0, buffer.size) } catch (_: Exception) { -1 }
                 if (read > 0) {
-                    var sum = 0.0; for (i in 0 until read) sum += abs(buffer[i].toInt())
+                    var sum = 0.0
+                    for (i in 0 until read) sum += abs(buffer[i].toInt())
                     onInputLevel(min(1f, ((sum / read).toFloat() / Short.MAX_VALUE) * 6f))
                     onMicChunkBase64(Base64.encodeToString(shortsToBytes(buffer, read), Base64.NO_WRAP))
                 }
@@ -60,7 +61,8 @@ class AudioEngine(
     fun stopRecording() {
         recordJob?.cancel(); recordJob = null
         audioRecord?.let { try { it.stop() } catch (_: Exception) {}; it.release() }
-        audioRecord = null; onInputLevel(0f)
+        audioRecord = null
+        onInputLevel(0f)
     }
 
     fun startPlayback() {
@@ -73,40 +75,85 @@ class AudioEngine(
             AudioFormat.Builder().setSampleRate(OUTPUT_SAMPLE_RATE).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build(),
             bufferSize, AudioTrack.MODE_STREAM, AudioManager.AUDIO_SESSION_ID_GENERATE
         )
-        audioTrack = track; playbackQueue.clear(); pendingPlaybackBytes.set(0L); totalFramesWritten.set(0L)
+        audioTrack = track
+        playbackQueue.clear(); pendingPlaybackBytes.set(0L); totalFramesWritten.set(0L)
         try { track.setVolume(1f) } catch (_: Exception) {}
         try { track.play() } catch (_: Exception) { track.release(); audioTrack = null; return }
         playbackJob = scope.launch(Dispatchers.IO) {
             while (isActive) {
                 val bytes = try { playbackQueue.poll(100, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { null } ?: continue
-                val current = audioTrack ?: break; var offset = 0; var writtenTotal = 0
+                val current = audioTrack ?: break
+                var offset = 0
+                var writtenTotal = 0
                 while (offset < bytes.size && isActive && audioTrack === current) {
                     val written = try { current.write(bytes, offset, bytes.size - offset, AudioTrack.WRITE_BLOCKING) } catch (_: Exception) { -1 }
                     if (written <= 0) break
-                    offset += written; writtenTotal += written
+                    offset += written
+                    writtenTotal += written
                 }
                 totalFramesWritten.addAndGet((writtenTotal / 2).toLong())
-                pendingPlaybackBytes.addAndGet(-bytes.size.toLong()); updateOutputLevel(bytes)
+                pendingPlaybackBytes.addAndGet(-bytes.size.toLong())
+                updateOutputLevel(bytes)
             }
         }
     }
 
-    fun playChunkBase64(b64: String) { try { val bytes = Base64.decode(b64, Base64.NO_WRAP); if (bytes.isNotEmpty() && audioTrack != null) { pendingPlaybackBytes.addAndGet(bytes.size.toLong()); playbackQueue.put(bytes) } } catch (_: Exception) {} }
+    fun playChunkBase64(b64: String) {
+        try {
+            val bytes = Base64.decode(b64, Base64.NO_WRAP)
+            if (bytes.isNotEmpty() && audioTrack != null) {
+                pendingPlaybackBytes.addAndGet(bytes.size.toLong())
+                playbackQueue.put(bytes)
+            }
+        } catch (_: Exception) {}
+    }
 
+    /**
+     * Wait until queued PCM has drained. A bounded safety window prevents a broken
+     * AudioTrack from leaving Anu permanently in SPEAKING state. This is NOT a
+     * response-generation timeout; it only protects the local playback state.
+     */
     fun whenPlaybackDrained(callback: () -> Unit) {
         scope.launch(Dispatchers.Default) {
-            while (isActive && pendingPlaybackBytes.get() > 0L) delay(10)
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8)
+            while (isActive && pendingPlaybackBytes.get() > 0L && System.nanoTime() < deadline) delay(10)
             val target = totalFramesWritten.get() and 0xFFFFFFFFL
-            while (isActive) { val track = audioTrack ?: break; val played = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL; if (((target - played) and 0xFFFFFFFFL) == 0L) break; delay(10) }
+            while (isActive && System.nanoTime() < deadline) {
+                val track = audioTrack ?: break
+                val played = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+                if (((target - played) and 0xFFFFFFFFL) == 0L) break
+                delay(10)
+            }
             if (isActive) mainHandler.post(callback)
         }
     }
 
-    fun flushPlayback() { playbackQueue.clear(); pendingPlaybackBytes.set(0L); totalFramesWritten.set(0L); audioTrack?.let { try { it.pause(); it.flush(); it.play() } catch (_: Exception) {} }; onOutputLevel(0f) }
+    fun flushPlayback() {
+        playbackQueue.clear(); pendingPlaybackBytes.set(0L); totalFramesWritten.set(0L)
+        audioTrack?.let { try { it.pause(); it.flush(); it.play() } catch (_: Exception) {} }
+        onOutputLevel(0f)
+    }
 
-    private fun updateOutputLevel(bytes: ByteArray) { var sum = 0.0; var i = 0; var count = 0; while (i + 1 < bytes.size) { val sample = ((bytes[i + 1].toInt() shl 8) or (bytes[i].toInt() and 0xFF)).toShort(); sum += abs(sample.toInt()); i += 2; count++ }; if (count > 0) onOutputLevel(min(1f, ((sum / count).toFloat() / Short.MAX_VALUE) * 6f)) }
+    private fun updateOutputLevel(bytes: ByteArray) {
+        var sum = 0.0; var i = 0; var count = 0
+        while (i + 1 < bytes.size) {
+            val sample = ((bytes[i + 1].toInt() shl 8) or (bytes[i].toInt() and 0xFF)).toShort()
+            sum += abs(sample.toInt()); i += 2; count++
+        }
+        if (count > 0) onOutputLevel(min(1f, ((sum / count).toFloat() / Short.MAX_VALUE) * 6f))
+    }
 
-    fun stopPlayback() { playbackJob?.cancel(); playbackJob = null; playbackQueue.clear(); pendingPlaybackBytes.set(0L); totalFramesWritten.set(0L); audioTrack?.let { try { it.stop() } catch (_: Exception) {}; it.release() }; audioTrack = null; onOutputLevel(0f) }
+    fun stopPlayback() {
+        playbackJob?.cancel(); playbackJob = null
+        playbackQueue.clear(); pendingPlaybackBytes.set(0L); totalFramesWritten.set(0L)
+        audioTrack?.let { try { it.stop() } catch (_: Exception) {}; it.release() }
+        audioTrack = null; onOutputLevel(0f)
+    }
+
     fun release() { stopRecording(); stopPlayback() }
-    private fun shortsToBytes(shorts: ShortArray, length: Int): ByteArray { val bytes = ByteArray(length * 2); for (i in 0 until length) { val v = shorts[i].toInt(); bytes[i * 2] = (v and 0xFF).toByte(); bytes[i * 2 + 1] = ((v shr 8) and 0xFF).toByte() }; return bytes }
+    private fun shortsToBytes(shorts: ShortArray, length: Int): ByteArray {
+        val bytes = ByteArray(length * 2)
+        for (i in 0 until length) { val v = shorts[i].toInt(); bytes[i * 2] = (v and 0xFF).toByte(); bytes[i * 2 + 1] = ((v shr 8) and 0xFF).toByte() }
+        return bytes
+    }
 }
