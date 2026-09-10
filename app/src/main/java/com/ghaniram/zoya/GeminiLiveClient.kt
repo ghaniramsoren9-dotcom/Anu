@@ -35,8 +35,14 @@ class GeminiLiveClient(
     private var webSocket: WebSocket? = null
     private var setupComplete = false
     private var terminalErrorSent = false
+    private var awaitingResponse = false
     private val pendingMessages = ArrayDeque<String>()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val responseWatchdog = Runnable {
+        if (setupComplete && awaitingResponse && webSocket != null) {
+            fail("Gemini Live stopped responding; recovering the live session…")
+        }
+    }
     private val setupTimeout = Runnable {
         if (!setupComplete && webSocket != null) fail("Gemini Live setup timed out. Check API key, Live API access, model availability, and internet connection.")
     }
@@ -54,12 +60,13 @@ class GeminiLiveClient(
     fun connect(systemInstruction: String, tools: JSONArray) {
         disconnectSilently()
         if (apiKey.isBlank()) {
-            callbacks.onError("Gemini API key is missing. Please add your key in Anu Settings -> Personal.")
+            callbacks.onError("Gemini Live API key is missing. Please add your key in Anu Settings -> Personal.")
             callbacks.onDisconnected()
             return
         }
         setupComplete = false
         terminalErrorSent = false
+        awaitingResponse = false
         pendingMessages.clear()
         val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$apiKey"
         webSocket = client.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
@@ -80,12 +87,7 @@ class GeminiLiveClient(
                     })
                     put("outputAudioTranscription", JSONObject())
                     put("inputAudioTranscription", JSONObject())
-                    put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text",
-                        systemInstruction +
-                            " You are Anu, a proactive personal assistant. You may speak first when a system event or useful screen observation gives you a clear reason to help. Do not invent observations. Keep unsolicited comments short and relevant. " +
-                            "For current India time or the user's current device location, call getDeviceInfo and use its India time/location fields as ground truth. " +
-                            "For a request to call a named contact, use accessibilityAction with action=call_contact and text equal to the contact name; do not open the Dialer or merely tell the user to call manually. Execute the tool before claiming the call was placed."
-                    ))))
+                    put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemInstruction + " You are Anu, a proactive personal assistant. You may speak first when a system event or useful screen observation gives you a clear reason to help. Do not invent observations. Keep unsolicited comments short and relevant. For current India time or the user's current device location, call getDeviceInfo and use its India time/location fields as ground truth. For a request to call a named contact, use accessibilityAction with action=call_contact and text equal to the contact name; do not open the Dialer or merely tell the user to call manually. Execute the tool before claiming the call was placed."))))
                     if (tools.length() > 0) put("tools", JSONArray().put(JSONObject().put("functionDeclarations", tools)))
                 }
                 if (!ws.send(JSONObject().put("setup", setupConfig).toString())) {
@@ -96,10 +98,7 @@ class GeminiLiveClient(
                 mainHandler.postDelayed(setupTimeout, 15_000L)
             }
             override fun onMessage(ws: WebSocket, text: String) { handleServerMessage(text) }
-            override fun onMessage(ws: WebSocket, bytes: ByteString) {
-                val text = bytes.utf8()
-                if (text.trimStart().startsWith("{")) handleServerMessage(text)
-            }
+            override fun onMessage(ws: WebSocket, bytes: ByteString) { val text = bytes.utf8(); if (text.trimStart().startsWith("{")) handleServerMessage(text) }
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
                 mainHandler.removeCallbacks(setupTimeout)
                 val http = response?.let { " HTTP ${it.code}" } ?: ""
@@ -107,7 +106,9 @@ class GeminiLiveClient(
             }
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
                 mainHandler.removeCallbacks(setupTimeout)
+                mainHandler.removeCallbacks(responseWatchdog)
                 setupComplete = false
+                awaitingResponse = false
                 if (webSocket === ws) webSocket = null
                 callbacks.onDisconnected()
             }
@@ -116,28 +117,23 @@ class GeminiLiveClient(
 
     private fun handleServerMessage(text: String) {
         val json = try { JSONObject(text) } catch (_: Exception) { return }
-
         json.optJSONObject("sessionResumptionUpdate")?.let { update ->
-            if (update.optBoolean("resumable", false)) {
-                update.optString("newHandle").takeIf { it.isNotBlank() }?.let { latestResumptionHandle = it }
-            }
+            if (update.optBoolean("resumable", false)) update.optString("newHandle").takeIf { it.isNotBlank() }?.let { latestResumptionHandle = it }
         }
-
         json.optJSONObject("goAway")?.let {
             callbacks.onError("Gemini Live connection is ending; reconnecting Anu…")
             webSocket?.close(1000, "Live API GoAway")
             return
         }
-
         if (json.has("setupComplete")) {
             mainHandler.removeCallbacks(setupTimeout)
             setupComplete = true
             terminalErrorSent = false
+            awaitingResponse = false
             callbacks.onConnected()
             flushPendingMessages()
             return
         }
-
         json.optJSONObject("error")?.let { error ->
             val code = if (error.has("code")) " (${error.optInt("code")})" else ""
             val status = error.optString("status")
@@ -145,26 +141,23 @@ class GeminiLiveClient(
             fail("Gemini Live API error$code${if (status.isNotBlank()) " $status" else ""}: $message")
             return
         }
-
         json.optJSONObject("serverContent")?.let { content ->
-            if (content.optBoolean("interrupted", false)) callbacks.onInterrupted()
+            if (content.optBoolean("interrupted", false)) { awaitingResponse = false; mainHandler.removeCallbacks(responseWatchdog); callbacks.onInterrupted() }
             content.optJSONObject("modelTurn")?.optJSONArray("parts")?.let { parts ->
                 for (i in 0 until parts.length()) {
                     val part = parts.optJSONObject(i) ?: continue
-                    part.optString("text").takeIf { it.isNotBlank() }?.let(callbacks::onModelText)
-                    part.optJSONObject("inlineData")?.optString("data")?.takeIf { it.isNotBlank() }?.let(callbacks::onAudioChunk)
+                    part.optString("text").takeIf { it.isNotBlank() }?.let { awaitingResponse = false; mainHandler.removeCallbacks(responseWatchdog); callbacks.onModelText(it) }
+                    part.optJSONObject("inlineData")?.optString("data")?.takeIf { it.isNotBlank() }?.let { awaitingResponse = false; mainHandler.removeCallbacks(responseWatchdog); callbacks.onAudioChunk(it) }
                 }
             }
-            content.optJSONObject("outputTranscription")?.optString("text")?.takeIf { it.isNotBlank() }?.let(callbacks::onModelText)
-            content.optJSONObject("inputTranscription")?.optString("text")?.takeIf { it.isNotBlank() }?.let(callbacks::onUserText)
-            if (content.optBoolean("turnComplete", false)) callbacks.onTurnComplete()
+            content.optJSONObject("outputTranscription")?.optString("text")?.takeIf { it.isNotBlank() }?.let { awaitingResponse = false; mainHandler.removeCallbacks(responseWatchdog); callbacks.onModelText(it) }
+            content.optJSONObject("inputTranscription")?.optString("text")?.takeIf { it.isNotBlank() }?.let { callbacks.onUserText(it); awaitingResponse = true; mainHandler.removeCallbacks(responseWatchdog); mainHandler.postDelayed(responseWatchdog, 30_000L) }
+            if (content.optBoolean("turnComplete", false)) { awaitingResponse = false; mainHandler.removeCallbacks(responseWatchdog); callbacks.onTurnComplete() }
         }
-
         json.optJSONObject("toolCall")?.optJSONArray("functionCalls")?.let { calls ->
-            for (i in 0 until calls.length()) {
-                val call = calls.optJSONObject(i) ?: continue
-                callbacks.onToolCall(call.optString("name"), call.optJSONObject("args") ?: JSONObject(), call.optString("id"))
-            }
+            awaitingResponse = false
+            mainHandler.removeCallbacks(responseWatchdog)
+            for (i in 0 until calls.length()) { val call = calls.optJSONObject(i) ?: continue; callbacks.onToolCall(call.optString("name"), call.optJSONObject("args") ?: JSONObject(), call.optString("id")) }
         }
     }
 
@@ -172,8 +165,10 @@ class GeminiLiveClient(
         if (terminalErrorSent) return
         terminalErrorSent = true
         setupComplete = false
+        awaitingResponse = false
         pendingMessages.clear()
         mainHandler.removeCallbacks(setupTimeout)
+        mainHandler.removeCallbacks(responseWatchdog)
         callbacks.onError(message)
         webSocket?.cancel()
         webSocket = null
@@ -182,31 +177,20 @@ class GeminiLiveClient(
 
     private fun enqueueOrSend(message: String) {
         if (message.isBlank()) return
-        if (!setupComplete) {
-            if (pendingMessages.size < 64) pendingMessages.addLast(message)
-            return
-        }
+        if (!setupComplete) { if (pendingMessages.size < 64) pendingMessages.addLast(message); return }
         webSocket?.send(message)
     }
 
-    private fun flushPendingMessages() {
-        while (setupComplete && pendingMessages.isNotEmpty()) webSocket?.send(pendingMessages.removeFirst())
-    }
+    private fun flushPendingMessages() { while (setupComplete && pendingMessages.isNotEmpty()) webSocket?.send(pendingMessages.removeFirst()) }
 
     fun sendAudioChunk(base64Pcm: String) {
         if (!setupComplete || base64Pcm.isBlank()) return
-        webSocket?.send(JSONObject().put("realtimeInput", JSONObject().put("audio", JSONObject().apply {
-            put("data", base64Pcm)
-            put("mimeType", "audio/pcm;rate=16000")
-        })).toString())
+        webSocket?.send(JSONObject().put("realtimeInput", JSONObject().put("audio", JSONObject().apply { put("data", base64Pcm); put("mimeType", "audio/pcm;rate=16000") })).toString())
     }
 
     fun sendVideoFrame(base64Jpeg: String) {
         if (base64Jpeg.isBlank()) return
-        enqueueOrSend(JSONObject().put("realtimeInput", JSONObject().put("video", JSONObject().apply {
-            put("data", base64Jpeg)
-            put("mimeType", "image/jpeg")
-        })).toString())
+        enqueueOrSend(JSONObject().put("realtimeInput", JSONObject().put("video", JSONObject().apply { put("data", base64Jpeg); put("mimeType", "image/jpeg") })).toString())
     }
 
     fun sendText(text: String) {
@@ -214,25 +198,19 @@ class GeminiLiveClient(
         enqueueOrSend(JSONObject().put("realtimeInput", JSONObject().put("text", text)).toString())
     }
 
-    fun sendVisionImage(base64Jpeg: String, prompt: String) {
-        if (base64Jpeg.isBlank()) return
-        sendVideoFrame(base64Jpeg)
-        sendText(prompt)
-    }
+    fun sendVisionImage(base64Jpeg: String, prompt: String) { if (base64Jpeg.isBlank()) return; sendVideoFrame(base64Jpeg); sendText(prompt) }
 
     fun sendToolResponse(name: String, id: String, output: String) {
         if (name.isBlank() || id.isBlank()) return
-        enqueueOrSend(JSONObject().put("toolResponse", JSONObject().put("functionResponses", JSONArray().put(JSONObject().apply {
-            put("name", name)
-            put("id", id)
-            put("response", JSONObject().put("result", output))
-        }))).toString())
+        enqueueOrSend(JSONObject().put("toolResponse", JSONObject().put("functionResponses", JSONArray().put(JSONObject().apply { put("name", name); put("id", id); put("response", JSONObject().put("result", output)) })).toString())
     }
 
     fun disconnect() {
         mainHandler.removeCallbacks(setupTimeout)
+        mainHandler.removeCallbacks(responseWatchdog)
         setupComplete = false
         terminalErrorSent = false
+        awaitingResponse = false
         pendingMessages.clear()
         webSocket?.close(1000, "Client closed")
         webSocket = null
@@ -240,7 +218,9 @@ class GeminiLiveClient(
 
     private fun disconnectSilently() {
         mainHandler.removeCallbacks(setupTimeout)
+        mainHandler.removeCallbacks(responseWatchdog)
         setupComplete = false
+        awaitingResponse = false
         pendingMessages.clear()
         webSocket?.cancel()
         webSocket = null
