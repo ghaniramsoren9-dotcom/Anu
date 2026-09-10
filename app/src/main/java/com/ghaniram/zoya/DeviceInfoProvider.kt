@@ -17,14 +17,14 @@ import android.os.StatFs
 import java.io.File
 import java.util.Locale
 
-/** Fresh, local device telemetry. Returns only the information actually requested. */
+/** Fresh, local device telemetry. Never fabricates unavailable values. */
 object DeviceInfoProvider {
     fun snapshot(context: Context): String {
         val battery = battery(context)
         val memory = memory(context)
         val storage = storage()
         val cpu = cpu()
-        val gpu = gpu(context)
+        val gpu = readGlRenderer() ?: "Unavailable from standard Android APIs"
         val deviceContext = context.applicationContext as android.app.Application
         val locationTime = DeviceContactLocationManager(deviceContext)
         val indiaTime = locationTime.indiaTime()
@@ -41,50 +41,37 @@ object DeviceInfoProvider {
             append("App memory: ${memory.appPssMb} MB PSS\n")
             append("Storage: ${storage.freeGb} GB free / ${storage.totalGb} GB total\n")
             append("CPU: $cpu\n")
-            append("GPU: ${gpu.renderer}")
-            gpu.utilization?.let { append(", current utilization ${it}%") }
-            gpu.headroom?.let { append(", Android 16 GPU headroom ${format(it)}% available") }
-            append("\n")
+            append("GPU renderer: $gpu\n")
             append("Display: ${context.resources.displayMetrics.widthPixels}x${context.resources.displayMetrics.heightPixels}, density ${context.resources.displayMetrics.density}\n")
             append("India time: $indiaTime\n")
             append("Location: $location")
         }
 
-        // Text and voice both reach this provider. Prefer the one-shot query bridge,
-        // then fall back to the latest user message. Never return the whole snapshot
-        // unless the user explicitly asks for complete/all device information.
         val query = DeviceQueryContext.consume().ifBlank {
-            runCatching {
-                ZoyaSessionManager.state.value.chatMessages.lastOrNull { it.role == ChatRole.USER }?.text.orEmpty()
-            }.getOrDefault("")
+            runCatching { ZoyaSessionManager.state.value.chatMessages.lastOrNull { it.role == ChatRole.USER }?.text.orEmpty() }.getOrDefault("")
         }.lowercase(Locale.getDefault())
-
         if (query.isBlank()) return "Device: ${Build.MANUFACTURER} ${Build.MODEL}. Android ${Build.VERSION.RELEASE}."
         val lines = full.lines()
-        fun pick(vararg prefixes: String): String = lines
-            .filter { line -> prefixes.any { p -> line.lowercase(Locale.getDefault()).startsWith(p) } }
-            .joinToString("\n")
-
-        val asksAll = query.contains("complete") || query.contains("all device") ||
-            query.contains("full device") || query.contains("ସମ୍ପୂର୍ଣ୍ଣ") || query.contains("ସବୁ device") || query.contains("ସବୁ ତଥ୍ୟ")
-
+        fun pick(vararg prefixes: String): String = lines.filter { line -> prefixes.any { p -> line.lowercase(Locale.getDefault()).startsWith(p) } }.joinToString("\n")
+        val asksAll = query.contains("complete") || query.contains("all device") || query.contains("full device") ||
+            query.contains("device information") || query.contains("device info") || query.contains("phone information") ||
+            query.contains("phone info") || query.contains("ସମ୍ପୂର୍ଣ୍ଣ") || query.contains("ସବୁ device") || query.contains("ସବୁ ତଥ୍ୟ")
         return when {
+            asksAll -> full
             query.contains("battery") || query.contains("ବ୍ୟାଟେରୀ") || query.contains("ବ୍ୟାଟେରି") || query.contains("charge") || query.contains("charging") || query.contains("ଚାର୍ଜ") -> pick("battery:")
             query.contains("temperature") || query.contains("thermal") || query.contains("ତାପମାତ୍ରା") -> pick("battery:")
             query.contains("ram") || query.contains("memory") || query.contains("ମେମୋରୀ") || query.contains("ରାମ") -> pick("ram:", "app memory:")
             query.contains("storage") || query.contains("disk") || query.contains("free space") || query.contains("ଷ୍ଟୋରେଜ") || query.contains("ସ୍ପେସ") -> pick("storage:")
             query.contains("cpu") || query.contains("processor") || query.contains("ପ୍ରୋସେସର") -> pick("cpu:")
-            query.contains("gpu") || query.contains("graphics") || query.contains("ଗ୍ରାଫିକ୍ସ") -> pick("gpu:")
+            query.contains("gpu") || query.contains("graphics") || query.contains("ଗ୍ରାଫିକ୍ସ") -> pick("gpu renderer:")
             query.contains("display") || query.contains("screen resolution") || query.contains("resolution") || query.contains("ଡିସପ୍ଲେ") || query.contains("ରେଜୋଲୁସନ") -> pick("display:")
             query.contains("time") || query.contains("କେତେ ବାଜି") || query.contains("ସମୟ") -> pick("india time:")
             query.contains("location") || query.contains("ଅବସ୍ଥାନ") || query.contains("where am i") -> pick("location:")
             query.contains("model") || query.contains("ମଡେଲ") -> pick("model:")
             query.contains("manufacturer") || query.contains("brand") || query.contains("କମ୍ପାନୀ") || query.contains("ବ୍ରାଣ୍ଡ") -> pick("manufacturer:")
             query.contains("android version") || query.contains("ଆଣ୍ଡ୍ରଏଡ") -> pick("android:")
-            asksAll || query.contains("device information") || query.contains("device info") || query.contains("phone information") || query.contains("phone info") ->
-                pick("model:", "android:", "battery:")
-            else -> "ମୁଁ ତୁମର ପଚରାଯାଇଥିବା device information ଅନୁସାରେ କେବଳ ଦରକାରୀ ତଥ୍ୟ ଦେବି।"
-        }.ifBlank { "ଡିଭାଇସ୍ ସୂଚନା ଏବେ ମିଳିଲା ନାହିଁ।" }
+            else -> "I could not match that device-information request to a verified local field."
+        }.ifBlank { "Verified device information is unavailable right now." }
     }
 
     private data class Battery(val percent: Int, val charging: Boolean, val temperatureC: Float?)
@@ -97,71 +84,23 @@ object DeviceInfoProvider {
         val percent = if (level >= 0 && scale > 0) kotlin.math.round((level * 100f) / scale).toInt() else -1
         return Battery(percent, status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL, if (temp != null && temp != Int.MIN_VALUE) temp / 10f else null)
     }
-
     private data class Memory(val totalMb: Long, val availableMb: Long, val appPssMb: Long)
-    private fun memory(context: Context): Memory {
-        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        val info = ActivityManager.MemoryInfo().also(am::getMemoryInfo)
-        val debugInfo = Debug.MemoryInfo()
-        Debug.getMemoryInfo(debugInfo)
-        return Memory(info.totalMem / MB, info.availMem / MB, debugInfo.totalPss.toLong() / 1024L)
-    }
-
+    private fun memory(context: Context): Memory { val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager; val info = ActivityManager.MemoryInfo().also(am::getMemoryInfo); val debugInfo = Debug.MemoryInfo(); Debug.getMemoryInfo(debugInfo); return Memory(info.totalMem / MB, info.availMem / MB, debugInfo.totalPss.toLong() / 1024L) }
     private data class Storage(val totalGb: String, val freeGb: String)
-    private fun storage(): Storage {
-        val stat = StatFs(File("/data").path)
-        val total = stat.totalBytes.toDouble() / GB
-        val free = stat.availableBytes.toDouble() / GB
-        return Storage(format(total), format(free))
-    }
-
-    private fun cpu(): String {
-        val cores = Runtime.getRuntime().availableProcessors()
-        val freq = runCatching { File("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq").readText().trim().toLong() / 1000L }.getOrNull()
-        return if (freq != null && freq > 0) "$cores cores, current cpu0 ${freq} MHz" else "$cores available processors; frequency unavailable to this app"
-    }
-
-    private data class Gpu(val renderer: String, val utilization: Int?, val headroom: Float?)
-    private fun gpu(context: Context): Gpu = Gpu(readGlRenderer() ?: buildFallbackGpuName(), readGpuUtilization(), null)
-
+    private fun storage(): Storage { val stat = StatFs(File("/data").path); return Storage(format(stat.totalBytes.toDouble() / GB), format(stat.availableBytes.toDouble() / GB)) }
+    private fun cpu(): String { val cores = Runtime.getRuntime().availableProcessors(); val freq = runCatching { File("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq").readText().trim().toLong() / 1000L }.getOrNull(); return if (freq != null && freq > 0) "$cores cores, current cpu0 ${freq} MHz" else "$cores available processors; current frequency unavailable" }
     private fun readGlRenderer(): String? = runCatching {
-        var display: EGLDisplay = EGL14.EGL_NO_DISPLAY
-        var context: EGLContext = EGL14.EGL_NO_CONTEXT
-        var surface: EGLSurface = EGL14.EGL_NO_SURFACE
-        display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
-        if (display == EGL14.EGL_NO_DISPLAY) return@runCatching null
-        val version = IntArray(2)
-        if (!EGL14.eglInitialize(display, version, 0, version, 1)) return@runCatching null
-        val configs = arrayOfNulls<EGLConfig>(1)
-        val num = IntArray(1)
-        val attribs = intArrayOf(EGL14.EGL_RENDERABLE_TYPE, 4, EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT, EGL14.EGL_NONE)
+        var display: EGLDisplay = EGL14.EGL_NO_DISPLAY; var context: EGLContext = EGL14.EGL_NO_CONTEXT; var surface: EGLSurface = EGL14.EGL_NO_SURFACE
+        display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY); if (display == EGL14.EGL_NO_DISPLAY) return@runCatching null
+        val version = IntArray(2); if (!EGL14.eglInitialize(display, version, 0, version, 1)) return@runCatching null
+        val configs = arrayOfNulls<EGLConfig>(1); val num = IntArray(1); val attribs = intArrayOf(EGL14.EGL_RENDERABLE_TYPE, 4, EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT, EGL14.EGL_NONE)
         if (!EGL14.eglChooseConfig(display, attribs, 0, configs, 0, 1, num, 0) || num[0] == 0) return@runCatching null
-        val config = configs[0] ?: return@runCatching null
-        val contextAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE)
-        context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT, contextAttribs, 0)
-        if (context == EGL14.EGL_NO_CONTEXT) return@runCatching null
+        val config = configs[0] ?: return@runCatching null; val contextAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE)
+        context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT, contextAttribs, 0); if (context == EGL14.EGL_NO_CONTEXT) return@runCatching null
         val surfaceAttribs = intArrayOf(EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE)
-        surface = EGL14.eglCreatePbufferSurface(display, config, surfaceAttribs, 0)
-        if (surface == EGL14.EGL_NO_SURFACE || !EGL14.eglMakeCurrent(display, surface, surface, context)) return@runCatching null
+        surface = EGL14.eglCreatePbufferSurface(display, config, surfaceAttribs, 0); if (surface == EGL14.EGL_NO_SURFACE || !EGL14.eglMakeCurrent(display, surface, surface, context)) return@runCatching null
         GLES20.glGetString(GLES20.GL_RENDERER)?.takeIf { it.isNotBlank() }
     }.getOrNull()
-
-    private fun buildFallbackGpuName(): String {
-        val hardware = listOfNotNull(Build.HARDWARE, Build.BOARD).joinToString(" ").lowercase(Locale.US)
-        return when {
-            hardware.contains("qcom") || hardware.contains("qualcomm") -> "Qualcomm GPU (exact renderer unavailable)"
-            hardware.contains("mt") || hardware.contains("mediatek") -> "MediaTek GPU (exact renderer unavailable)"
-            hardware.contains("exynos") -> "Samsung/Exynos GPU (exact renderer unavailable)"
-            else -> "GPU renderer unavailable from standard Android APIs"
-        }
-    }
-
-    private fun readGpuUtilization(): Int? = listOf(
-        "/sys/class/kgsl/kgsl-3d0/gpu_busy_percentage",
-        "/sys/class/kgsl/kgsl-3d0/gpu_busy_percent"
-    ).asSequence().mapNotNull { path -> runCatching { File(path).readText().trim().removeSuffix("%").toIntOrNull() }.getOrNull() }
-        .firstOrNull { it in 0..100 }
-
     private fun format(value: Double) = String.format(Locale.US, "%.1f", value)
     private fun format(value: Float) = String.format(Locale.US, "%.1f", value)
     private const val MB = 1024L * 1024L
