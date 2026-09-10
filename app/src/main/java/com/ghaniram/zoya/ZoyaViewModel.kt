@@ -18,7 +18,12 @@ import kotlinx.coroutines.flow.first
 
 /** UI facade. The session manager owns the Gemini/audio session across Activity recreation. */
 class ZoyaViewModel(application: Application) : AndroidViewModel(application) {
-    init { ZoyaSessionManager.initialize(application) }
+    init {
+        ZoyaSessionManager.initialize(application)
+        // A newly-created Activity/ViewModel must never resurrect the previous
+        // microphone session. Listening is started only by an explicit user ON action.
+        ZoyaSessionManager.disconnect()
+    }
     val state: StateFlow<ZoyaUiState> = ZoyaSessionManager.state
     fun setLanguage(lang: ZoyaLanguage) = ZoyaSessionManager.setLanguage(lang)
     fun connect() = ZoyaSessionManager.connect()
@@ -30,8 +35,6 @@ class ZoyaViewModel(application: Application) : AndroidViewModel(application) {
         val clean = text.trim()
         if (clean.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {
-            // Handle reminder requests locally so Anu never responds that it lacks
-            // permission when the app itself can schedule the reminder.
             val reminderReply = AnuReminderCommand.trySchedule(getApplication(), clean)
             if (reminderReply != null) {
                 ZoyaSessionManager.sendText(reminderReply)
