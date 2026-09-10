@@ -15,6 +15,10 @@ import java.util.concurrent.Executors
 
 /** User-enabled AccessibilityService for UI controls, screen reading, autonomous help. */
 class AccessibilityControlService : AccessibilityService() {
+    private val screenshotExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "Anu-Screenshot").apply { isDaemon = true }
+    }
+
     override fun onServiceConnected() { super.onServiceConnected(); instance = this }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         TouchGuardRuntime.onAccessibilityEvent(this, event)
@@ -27,7 +31,11 @@ class AccessibilityControlService : AccessibilityService() {
         }
     }
     override fun onInterrupt() = Unit
-    override fun onDestroy() { if (instance === this) instance = null; super.onDestroy() }
+    override fun onDestroy() {
+        screenshotExecutor.shutdownNow()
+        if (instance === this) instance = null
+        super.onDestroy()
+    }
     fun currentPackageName(): String? = rootInActiveWindow?.packageName?.toString()
     fun rootNodeForVerification(): AccessibilityNodeInfo? = rootInActiveWindow
     fun uiSnapshot(): String = runCatching { UiSnapshot.capture(rootInActiveWindow, currentPackageName()).toString() }.getOrDefault("{\"package\":\"\",\"elements\":[]}")
@@ -43,17 +51,32 @@ class AccessibilityControlService : AccessibilityService() {
         runCatching {
             takeScreenshot(
                 Display.DEFAULT_DISPLAY,
-                Executors.newSingleThreadExecutor(),
+                screenshotExecutor,
                 object : TakeScreenshotCallback {
                     override fun onSuccess(screenshot: ScreenshotResult) {
                         val bytes = runCatching {
                             val hardwareBuffer = screenshot.hardwareBuffer
-                            val bitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, screenshot.colorSpace)
+                            val original = Bitmap.wrapHardwareBuffer(hardwareBuffer, screenshot.colorSpace)
                             hardwareBuffer.close()
-                            if (bitmap == null) ByteArray(0) else ByteArrayOutputStream().use { out ->
-                                bitmap.copy(Bitmap.Config.ARGB_8888, false).compress(Bitmap.CompressFormat.JPEG, 72, out)
-                                bitmap.recycle()
-                                out.toByteArray()
+                            if (original == null) ByteArray(0) else {
+                                // Screen understanding does not need full device resolution. Keep frames small
+                                // to reduce upload bandwidth and Live API processing latency.
+                                val maxDimension = 768
+                                val scale = minOf(1f, maxDimension.toFloat() / maxOf(original.width, original.height))
+                                val bitmap = if (scale < 1f) {
+                                    Bitmap.createScaledBitmap(
+                                        original,
+                                        (original.width * scale).toInt().coerceAtLeast(1),
+                                        (original.height * scale).toInt().coerceAtLeast(1),
+                                        true
+                                    ).also { if (it !== original) original.recycle() }
+                                } else original
+                                ByteArrayOutputStream().use { out ->
+                                    bitmap.copy(Bitmap.Config.ARGB_8888, false)
+                                        .compress(Bitmap.CompressFormat.JPEG, 45, out)
+                                    bitmap.recycle()
+                                    out.toByteArray()
+                                }
                             }
                         }.getOrDefault(ByteArray(0))
                         onCaptured(bytes)
