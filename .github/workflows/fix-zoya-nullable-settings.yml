@@ -1,0 +1,47 @@
+name: Fix Zoya nullable settings compile error
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fix nullable AnuSettingsStore access
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt')
+          s = p.read_text(encoding='utf-8')
+          old = 'AnuSettingsStore.getInstance(app).customGeminiKey.trim()'
+          new = 'AnuSettingsStore.getInstance(app)?.customGeminiKey?.trim().orEmpty()'
+          if old not in s:
+              raise SystemExit('Expected nullable-access expression was not found; refusing to modify the file.')
+          s2 = s.replace(old, new, 1)
+          p.write_text(s2, encoding='utf-8')
+          print('Applied nullable-safe AnuSettingsStore access.')
+          PY
+
+      - name: Commit fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix: handle nullable AnuSettingsStore in session manager'
+          git push
+
+      - name: Remove one-off fixer workflow
+        if: success()
+        run: |
+          git rm .github/workflows/fix-zoya-nullable-settings.yml
+          git commit -m 'chore: remove one-off nullable settings fixer'
+          git push
