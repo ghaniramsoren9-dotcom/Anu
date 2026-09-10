@@ -11,6 +11,8 @@ import okio.ByteString
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.ArrayDeque
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 
 /** Direct Gemini Live API WebSocket client with long-session resumption. */
@@ -37,6 +39,7 @@ class GeminiLiveClient(
     private var terminalErrorSent = false
     private val pendingMessages = ArrayDeque<String>()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var screenVisionExecutor: ScheduledExecutorService? = null
     private val setupTimeout = Runnable {
         if (!setupComplete && webSocket != null) fail("Gemini Live setup timed out. Check API key, Live API access, model availability, and internet connection.")
     }
@@ -80,7 +83,7 @@ class GeminiLiveClient(
                     })
                     put("outputAudioTranscription", JSONObject())
                     put("inputAudioTranscription", JSONObject())
-                    put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemInstruction + " You are Anu, a proactive personal assistant. You may speak first when a system event or useful screen observation gives you a clear reason to help. Do not invent observations. Keep unsolicited comments short and relevant. For current India time or the user's current device location, call getDeviceInfo and use its India time/location fields as ground truth. For a request to call a named contact, use accessibilityAction with action=call_contact and text equal to the contact name; do not open the Dialer or merely tell the user to call manually. Execute the tool before claiming the call was placed."))))
+                    put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemInstruction + " You are Anu, a proactive personal assistant. You may speak first when a system event or useful screen observation gives you a clear reason to help. Do not invent observations. Keep unsolicited comments short and relevant. For current India time or the user's current device location, call getDeviceInfo and use its India time/location fields as ground truth. For a request to call a named contact, use accessibilityAction with action=call_contact and text equal to the contact name; do not open the Dialer or merely tell the user to call manually. Execute the tool before claiming the call was placed. When live screen frames are available, treat them as current visual evidence. You can inspect images, video frames, app interfaces, and games visible on the device screen, but only describe what is actually visible in the latest frame. Do not claim to see pixels when screen frames are unavailable."))))
                     if (tools.length() > 0) put("tools", JSONArray().put(JSONObject().put("functionDeclarations", tools)))
                 }
                 if (!ws.send(JSONObject().put("setup", setupConfig).toString())) {
@@ -100,6 +103,7 @@ class GeminiLiveClient(
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
                 mainHandler.removeCallbacks(setupTimeout)
                 setupComplete = false
+                stopScreenVision()
                 if (webSocket === ws) webSocket = null
                 callbacks.onDisconnected()
             }
@@ -112,8 +116,6 @@ class GeminiLiveClient(
             if (update.optBoolean("resumable", false)) update.optString("newHandle").takeIf { it.isNotBlank() }?.let { latestResumptionHandle = it }
         }
         json.optJSONObject("goAway")?.let {
-            // The Live service can ask clients to leave a session. The session manager
-            // reconnects with the latest resumption handle; this is not a user stop.
             callbacks.onError("Gemini Live session is renewing; reconnecting Anu…")
             webSocket?.close(1000, "Live API GoAway")
             return
@@ -124,6 +126,7 @@ class GeminiLiveClient(
             terminalErrorSent = false
             callbacks.onConnected()
             flushPendingMessages()
+            startScreenVision()
             return
         }
         json.optJSONObject("error")?.let { error ->
@@ -154,10 +157,34 @@ class GeminiLiveClient(
         }
     }
 
+    /** Start low-rate pixel sampling from the user's enabled AccessibilityService. */
+    private fun startScreenVision() {
+        stopScreenVision()
+        screenVisionExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
+            Thread(runnable, "Anu-ScreenVision").apply { isDaemon = true }
+        }.also { executor ->
+            executor.scheduleWithFixedDelay({
+                if (!setupComplete) return@scheduleWithFixedDelay
+                AccessibilityControlService.instance?.captureScreenJpeg { bytes ->
+                    if (bytes.isNotEmpty() && setupComplete) {
+                        val base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                        sendVideoFrame(base64)
+                    }
+                }
+            }, 300L, 1200L, TimeUnit.MILLISECONDS)
+        }
+    }
+
+    private fun stopScreenVision() {
+        screenVisionExecutor?.shutdownNow()
+        screenVisionExecutor = null
+    }
+
     private fun fail(message: String) {
         if (terminalErrorSent) return
         terminalErrorSent = true
         setupComplete = false
+        stopScreenVision()
         pendingMessages.clear()
         mainHandler.removeCallbacks(setupTimeout)
         callbacks.onError(message)
@@ -180,8 +207,8 @@ class GeminiLiveClient(
     }
 
     fun sendVideoFrame(base64Jpeg: String) {
-        if (base64Jpeg.isBlank()) return
-        enqueueOrSend(JSONObject().put("realtimeInput", JSONObject().put("video", JSONObject().apply { put("data", base64Jpeg); put("mimeType", "image/jpeg") })).toString())
+        if (base64Jpeg.isBlank() || !setupComplete) return
+        webSocket?.send(JSONObject().put("realtimeInput", JSONObject().put("video", JSONObject().apply { put("data", base64Jpeg); put("mimeType", "image/jpeg") })).toString())
     }
 
     fun sendText(text: String) {
@@ -208,6 +235,7 @@ class GeminiLiveClient(
         mainHandler.removeCallbacks(setupTimeout)
         setupComplete = false
         terminalErrorSent = false
+        stopScreenVision()
         pendingMessages.clear()
         webSocket?.close(1000, "Client closed")
         webSocket = null
@@ -216,6 +244,7 @@ class GeminiLiveClient(
     private fun disconnectSilently() {
         mainHandler.removeCallbacks(setupTimeout)
         setupComplete = false
+        stopScreenVision()
         pendingMessages.clear()
         webSocket?.cancel()
         webSocket = null
