@@ -193,7 +193,15 @@ class GeminiLiveClient(
 
     fun sendToolResponse(name: String, id: String, output: String) {
         if (name.isBlank() || id.isBlank()) return
-        enqueueOrSend(JSONObject().put("toolResponse", JSONObject().put("functionResponses", JSONArray().put(JSONObject().apply { put("name", name); put("id", id); put("response", JSONObject().put("result", output)) })).toString())
+        val response = JSONObject().put("result", output)
+        val functionResponse = JSONObject().apply {
+            put("name", name)
+            put("id", id)
+            put("response", response)
+        }
+        val functionResponses = JSONArray().put(functionResponse)
+        val toolResponse = JSONObject().put("functionResponses", functionResponses)
+        enqueueOrSend(JSONObject().put("toolResponse", toolResponse).toString())
     }
 
     fun disconnect() {
