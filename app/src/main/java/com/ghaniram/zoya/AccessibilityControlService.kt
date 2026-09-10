@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
+import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.annotation.RequiresApi
@@ -31,11 +32,7 @@ class AccessibilityControlService : AccessibilityService() {
     fun rootNodeForVerification(): AccessibilityNodeInfo? = rootInActiveWindow
     fun uiSnapshot(): String = runCatching { UiSnapshot.capture(rootInActiveWindow, currentPackageName()).toString() }.getOrDefault("{\"package\":\"\",\"elements\":[]}")
 
-    /**
-     * Captures the actual device display, not just the accessibility node tree.
-     * This is what lets Anu visually inspect image/video frames and games whose
-     * pixels are not exposed as AccessibilityNodeInfo (Android 11+).
-     */
+    /** Captures actual display pixels, including app images/video/game frames not exposed in the node tree. */
     fun captureScreenJpeg(onCaptured: (ByteArray) -> Unit) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) { onCaptured(ByteArray(0)); return }
         captureScreenJpegApi30(onCaptured)
@@ -45,7 +42,7 @@ class AccessibilityControlService : AccessibilityService() {
     private fun captureScreenJpegApi30(onCaptured: (ByteArray) -> Unit) {
         runCatching {
             takeScreenshot(
-                displayId,
+                Display.DEFAULT_DISPLAY,
                 Executors.newSingleThreadExecutor(),
                 object : TakeScreenshotCallback {
                     override fun onSuccess(screenshot: ScreenshotResult) {
