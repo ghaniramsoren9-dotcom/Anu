@@ -21,15 +21,13 @@ object ProactiveEventEngine {
     private val lastDispatch = ConcurrentHashMap<String, AtomicLong>()
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var ambientRunning = false
-    @Volatile private var networkCallback: ConnectivityManager.NetworkCallback? = null
-    @Volatile private var networkManager: ConnectivityManager? = null
     @Volatile private var lastAmbientSnapshot = ""
     @Volatile private var lastAmbientSpokenAt = 0L
     @Volatile private var lastUserActivityAt = SystemClock.elapsedRealtime()
     @Volatile private var lastPackage = ""
+    @Volatile private var currentTransport = -1
 
     fun dispatch(context: Context, event: String, key: String = event) {
-        if (event.isBlank()) return
         val now = SystemClock.elapsedRealtime()
         val stamp = lastDispatch.getOrPut(key) { AtomicLong(0L) }
         val previous = stamp.get()
@@ -40,6 +38,20 @@ object ProactiveEventEngine {
             "[PROACTIVE SYSTEM EVENT] $event\n" +
                 "Speak to the user proactively in one short, natural sentence when useful. " +
                 "If nothing useful, stay silent. Do not narrate the whole screen."
+        )
+    }
+
+    fun dispatchReminder(context: Context, title: String, timeLabel: String, taskId: String) {
+        val now = SystemClock.elapsedRealtime()
+        val key = "reminder:${taskId.ifBlank { title }}"
+        val stamp = lastDispatch.getOrPut(key) { AtomicLong(0L) }
+        val previous = stamp.get()
+        if (now - previous < DEBOUNCE_MS || !stamp.compareAndSet(previous, now)) return
+        val timeInfo = if (timeLabel.isNotBlank()) " (scheduled for $timeLabel)" else ""
+        ProactiveVoiceBridge.dispatch(
+            context,
+            "[PROACTIVE SYSTEM EVENT] It is time for the user's scheduled reminder: \"$title\"$timeInfo.\n" +
+                "Speak to the user immediately in a warm, caring, and alert voice to announce this reminder. Do not stay silent. Announce the task clearly now."
         )
     }
 
@@ -68,15 +80,15 @@ object ProactiveEventEngine {
 
     fun startAmbientScreenAwareness(context: Context) {
         val app = context.applicationContext
-        if (ambientRunning) return
+        val store = runCatching { AnuSettingsStore.getInstance(app) }.getOrNull() ?: return
+        if (!store.proactiveAnu || ambientRunning) return
         ambientRunning = true
-        startNetworkMonitor(app)
+
         val tick = object : Runnable {
             override fun run() {
-                if (!ambientRunning) return
-                runCatching {
-                    val store = AnuSettingsStore.getInstance(app)
-                    if (store.proactiveAnu) {
+                val currentStore = runCatching { AnuSettingsStore.getInstance(app) }.getOrNull()
+                if (currentStore?.proactiveAnu == true) {
+                    runCatching {
                         val snapshot = AccessibilityControlService.instance?.uiSnapshot().orEmpty()
                         val valid = snapshot.isNotBlank() && snapshot != "{\"package\":\"\",\"elements\":[]}"
                         val now = SystemClock.elapsedRealtime()
@@ -113,28 +125,16 @@ object ProactiveEventEngine {
     }
 
     private fun startNetworkMonitor(context: Context) {
-        if (networkCallback != null) return
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            private var currentTransport = -1
-            private var initialized = false
-
-            override fun onAvailable(network: Network) {}
-
-            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+        cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                val store = runCatching { AnuSettingsStore.getInstance(context) }.getOrNull() ?: return
                 val transport = when {
-                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> NetworkCapabilities.TRANSPORT_WIFI
-                    caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> NetworkCapabilities.TRANSPORT_CELLULAR
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> NetworkCapabilities.TRANSPORT_WIFI
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> NetworkCapabilities.TRANSPORT_CELLULAR
                     else -> -1
                 }
-                if (transport == -1) return
-                if (!initialized) {
-                    initialized = true
-                    currentTransport = transport
-                    return
-                }
                 if (transport == currentTransport) return
-                val store = runCatching { AnuSettingsStore.getInstance(context) }.getOrNull() ?: return
                 if (!store.eventAnnouncementsMaster) return
                 if (currentTransport == NetworkCapabilities.TRANSPORT_WIFI && store.triggerWifiLost) {
                     dispatch(context, "Wi-Fi connectivity was lost.", "wifi:lost")
@@ -153,23 +153,6 @@ object ProactiveEventEngine {
                 }
                 currentTransport = -1
             }
-        }
-        runCatching {
-            cm.registerDefaultNetworkCallback(callback)
-            networkManager = cm
-            networkCallback = callback
-        }
-    }
-
-    fun stopAmbientScreenAwareness() {
-        ambientRunning = false
-        handler.removeCallbacksAndMessages(null)
-        val cm = networkManager
-        val callback = networkCallback
-        if (cm != null && callback != null) runCatching { cm.unregisterNetworkCallback(callback) }
-        networkCallback = null
-        networkManager = null
-        lastAmbientSnapshot = ""
-        lastPackage = ""
+        })
     }
 }

@@ -16,7 +16,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 
-/** Direct Gemini Live API WebSocket client with long-session resumption. */
+/** Direct Gemini Live API WebSocket client with long-session resumption and robust turn completions. */
 class GeminiLiveClient(
     private val apiKey: String,
     private val model: String = "models/gemini-3.1-flash-live-preview",
@@ -45,16 +45,13 @@ class GeminiLiveClient(
     private val setupTimeout = Runnable {
         if (!setupComplete && webSocket != null) fail("Gemini Live setup timed out. Check API key, Live API access, model availability, and internet connection.")
     }
+    private var latestResumptionHandle: String? = null
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)
         .pingInterval(20, TimeUnit.SECONDS)
         .build()
-
-    companion object {
-        @Volatile private var latestResumptionHandle: String? = null
-    }
 
     fun connect(systemInstruction: String, tools: JSONArray) {
         disconnectSilently()
@@ -79,10 +76,6 @@ class GeminiLiveClient(
                             })
                         })
                     })
-                    put("contextWindowCompression", JSONObject().put("slidingWindow", JSONObject()))
-                    put("sessionResumption", JSONObject().apply {
-                        latestResumptionHandle?.takeIf { it.isNotBlank() }?.let { put("handle", it) }
-                    })
                     put("outputAudioTranscription", JSONObject())
                     put("inputAudioTranscription", JSONObject())
                     put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemInstruction + " You are Anu, a proactive personal assistant. You may speak first when a system event or useful screen observation gives you a clear reason to help. Do not invent observations. Keep unsolicited comments short and relevant. For current India time or the user's current device location, call getDeviceInfo and use its India time/location fields as ground truth. For a request to call a named contact, use accessibilityAction with action=call_contact and text equal to the contact name; do not open the Dialer or merely tell the user to call manually. Execute the tool before claiming the call was placed. When live screen frames are available, treat them as current visual evidence. You can inspect images, video frames, app interfaces, and games visible on the device screen, but only describe what is actually visible in the latest frame. Do not claim to see pixels when screen frames are unavailable."))))
@@ -100,7 +93,7 @@ class GeminiLiveClient(
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
                 mainHandler.removeCallbacks(setupTimeout)
                 val http = response?.let { " HTTP ${it.code}" } ?: ""
-                fail("Gemini Live WebSocket failed$http: ${t.message ?: "unknown network error"}")
+                fail("Gemini Live WebSocket failed$http: ${t.message ?: \"unknown network error\"}")
             }
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
                 mainHandler.removeCallbacks(setupTimeout)
@@ -126,7 +119,6 @@ class GeminiLiveClient(
             mainHandler.removeCallbacks(setupTimeout)
             setupComplete = true
             terminalErrorSent = false
-            lastScreenFrameHash = null
             callbacks.onConnected()
             flushPendingMessages()
             startScreenVision()
@@ -145,7 +137,7 @@ class GeminiLiveClient(
                 for (i in 0 until parts.length()) {
                     val part = parts.optJSONObject(i) ?: continue
                     part.optString("text").takeIf { it.isNotBlank() }?.let { callbacks.onModelText(it) }
-                    part.optJSONObject("inlineData")?.optString("data")?.takeIf { it.isNotBlank() }?.let { callbacks.onAudioChunk(it) }
+                    part.optJSONObject("inlineData")?.optString("data").takeIf { it.isNotBlank() }?.let { callbacks.onAudioChunk(it) }
                 }
             }
             content.optJSONObject("outputTranscription")?.optString("text")?.takeIf { it.isNotBlank() }?.let { callbacks.onModelText(it) }
@@ -158,37 +150,6 @@ class GeminiLiveClient(
                 callbacks.onToolCall(call.optString("name"), call.optJSONObject("args") ?: JSONObject(), call.optString("id"))
             }
         }
-    }
-
-    /** Low-bandwidth pixel sampling for screen understanding. Static frames are not re-uploaded. */
-    private fun startScreenVision() {
-        stopScreenVision()
-        screenVisionExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
-            Thread(runnable, "Anu-ScreenVision").apply { isDaemon = true }
-        }.also { executor ->
-            executor.scheduleWithFixedDelay({
-                if (!setupComplete) return@scheduleWithFixedDelay
-                AccessibilityControlService.instance?.captureScreenJpeg { bytes ->
-                    if (bytes.isNotEmpty() && setupComplete) {
-                        val hash = sha256(bytes)
-                        if (hash == lastScreenFrameHash) return@captureScreenJpeg
-                        lastScreenFrameHash = hash
-                        val base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-                        sendVideoFrame(base64)
-                    }
-                }
-            }, 500L, 2200L, TimeUnit.MILLISECONDS)
-        }
-    }
-
-    private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
-        .digest(bytes)
-        .joinToString("") { "%02x".format(it) }
-
-    private fun stopScreenVision() {
-        screenVisionExecutor?.shutdownNow()
-        screenVisionExecutor = null
-        lastScreenFrameHash = null
     }
 
     private fun fail(message: String) {
@@ -222,9 +183,20 @@ class GeminiLiveClient(
         webSocket?.send(JSONObject().put("realtimeInput", JSONObject().put("video", JSONObject().apply { put("data", base64Jpeg); put("mimeType", "image/jpeg") })).toString())
     }
 
+    /**
+     * Sends prompt/text to Gemini Live as a completed client turn.
+     * Setting turnComplete = true instructs Gemini Live to immediately generate audio/text response.
+     */
     fun sendText(text: String) {
         if (text.isBlank()) return
-        enqueueOrSend(JSONObject().put("realtimeInput", JSONObject().put("text", text)).toString())
+        val payload = JSONObject().put("clientContent", JSONObject().apply {
+            put("turns", JSONArray().put(JSONObject().apply {
+                put("role", "user")
+                put("parts", JSONArray().put(JSONObject().put("text", text)))
+            }))
+            put("turnComplete", true)
+        }).toString()
+        enqueueOrSend(payload)
     }
 
     fun sendVisionImage(base64Jpeg: String, prompt: String) { if (base64Jpeg.isBlank()) return; sendVideoFrame(base64Jpeg); sendText(prompt) }
@@ -240,6 +212,37 @@ class GeminiLiveClient(
         val functionResponses = JSONArray().put(functionResponse)
         val toolResponse = JSONObject().put("functionResponses", functionResponses)
         enqueueOrSend(JSONObject().put("toolResponse", toolResponse).toString())
+    }
+
+    /** Start low-rate pixel sampling from the user's enabled AccessibilityService. */
+    private fun startScreenVision() {
+        stopScreenVision()
+        screenVisionExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
+            Thread(runnable, "Anu-ScreenVision").apply { isDaemon = true }
+        }.also { executor ->
+            executor.scheduleWithFixedDelay({
+                if (!setupComplete) return@scheduleWithFixedDelay
+                AccessibilityControlService.instance?.captureScreenJpeg { bytes ->
+                    if (bytes.isNotEmpty() && setupComplete) {
+                        val hash = sha256(bytes)
+                        if (hash == lastScreenFrameHash) return@captureScreenJpeg
+                        lastScreenFrameHash = hash
+                        val base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                        sendVideoFrame(base64)
+                    }
+                }
+            }, 500L, 2200L, TimeUnit.MILLISECONDS)
+        }
+    }
+
+    private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
+        .digest(bytes)
+        .joinToString("") { "%02x".format(it) }
+
+    private fun stopScreenVision() {
+        screenVisionExecutor?.shutdownNow()
+        screenVisionExecutor = null
+        lastScreenFrameHash = null
     }
 
     fun disconnect() {
