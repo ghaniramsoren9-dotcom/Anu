@@ -20,19 +20,10 @@ object ProactiveVoiceBridge {
                 Log.i(TAG, "Connecting Live session for proactive Gemini voice")
                 ZoyaSessionManager.connect()
             }
-            // Prefer direct client send to avoid chat clutter when possible
-            val sentDirect = runCatching {
-                val field = ZoyaSessionManager::class.java.getDeclaredField("client")
-                field.isAccessible = true
-                val client = field.get(ZoyaSessionManager) as? GeminiLiveClient
-                if (client != null) {
-                    client.sendText(prompt)
-                    true
-                } else false
-            }.getOrDefault(false)
-            if (!sentDirect) {
-                ZoyaSessionManager.sendText(prompt)
-            }
+            // Send via ZoyaSessionManager.sendText so it goes through standard flow.
+            // With pending message queue in GeminiLiveClient and clientContent turnComplete=true,
+            // Gemini will immediately process and speak the response once connected.
+            ZoyaSessionManager.sendText(prompt)
         }.onFailure {
             Log.w(TAG, "Proactive Gemini dispatch failed: ${it.message}")
         }

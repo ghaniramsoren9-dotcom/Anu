@@ -28,10 +28,10 @@ object AnuTaskAlarmScheduler {
         val app = context.applicationContext
         cancelLocal(taskId)
 
-        // Fast path: when Anu's process is alive, a short reminder fires at the requested
+        // In-process fast path: when Anu's process is alive, a reminder fires at the requested
         // wall-clock time even if exact-alarm special access has not been granted yet.
         val delay = triggerAt - System.currentTimeMillis()
-        if (delay > 0 && delay <= 15 * 60 * 1000L) {
+        if (delay > 0 && delay <= 24 * 60 * 60 * 1000L) {
             val runnable = Runnable {
                 pendingLocal.remove(taskId)
                 AnuTaskAlarmReceiver.fire(app, taskId, title, timeLabel)
@@ -57,8 +57,6 @@ object AnuTaskAlarmScheduler {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S && alarmManager.canScheduleExactAlarms()) {
                 alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi)
             } else {
-                // Keep a system fallback. Android may defer inexact alarms, but the local
-                // fast path above guarantees short tests while Anu is alive.
                 alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi)
             }
         }
@@ -85,8 +83,10 @@ object AnuTaskAlarmScheduler {
     private fun stableRequestCode(id: String): Int = id.hashCode()
 
     private fun nextOccurrence(label: String): Long? {
-        val normalized = label.trim().replace("\u00A0", " ")
-        val formats = listOf("h:mm a", "hh:mm a", "H:mm", "HH:mm", "h a", "hh a")
+        val normalized = normalizeTimeLabel(label)
+        val formats = listOf(
+            "h:mm a", "hh:mm a", "H:mm", "HH:mm", "h a", "hh a"
+        )
         val now = Calendar.getInstance()
         for (pattern in formats) {
             val parsed = runCatching {
@@ -104,5 +104,25 @@ object AnuTaskAlarmScheduler {
             return cal.timeInMillis
         }
         return null
+    }
+
+    private fun normalizeTimeLabel(raw: String): String {
+        var s = raw.trim()
+            .replace("\u00A0", " ")
+            .replace(Regex("\\s+"), " ")
+
+        // Convert Indic / Odia / Devanagari numerals to ASCII digits
+        s = s.map { ch ->
+            when (ch) {
+                in '୦'..'୯' -> '0' + (ch - '୦')
+                in '०'..'९' -> '0' + (ch - '०')
+                else -> ch
+            }
+        }.joinToString("")
+
+        // Ensure space before am/pm if glued to numbers (e.g., "7:00pm" -> "7:00 PM", "7pm" -> "7 PM")
+        s = s.replace(Regex("(?i)(\\d+)(am|pm)"), "$1 $2")
+        s = s.replace(Regex("(?i)(\\d+:\\d{2})(am|pm)"), "$1 $2")
+        return s.uppercase(Locale.US)
     }
 }
