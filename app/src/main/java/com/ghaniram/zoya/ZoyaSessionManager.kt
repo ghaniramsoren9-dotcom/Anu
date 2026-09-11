@@ -50,13 +50,13 @@ object ZoyaSessionManager {
         scope.launch { runCatching { repository.allChatMessagesFlow.collect { messages -> _state.update { it.copy(chatMessages = messages) } } } }
     }
 
-    fun setLanguage(lang: ZoyaLanguage) { 
+    fun setLanguage(lang: ZoyaLanguage) {
         ensureInitialized()
         prefs.edit().putString("language", lang.name).apply()
         _state.update { it.copy(language = lang, quote = idleQuotes[lang]?.random().orEmpty()) }
     }
 
-    fun connect() { 
+    fun connect() {
         ensureInitialized()
         prefs.edit().putBoolean("active", true).apply()
         startForegroundService()
@@ -91,19 +91,19 @@ object ZoyaSessionManager {
         _state.update { it.copy(connectionState = ConnectionState.DISCONNECTED, inputLevel = 0f, outputLevel = 0f, isAnuResponding = false) }
     }
 
-    fun startVisionSession() { 
+    fun startVisionSession() {
         ensureInitialized()
         prefs.edit().putBoolean("active", true).apply()
         startForegroundService()
         if (!isConnected()) connectInternal()
     }
-    
-    fun sendVisionFrame(base64Jpeg: String) { 
+
+    fun sendVisionFrame(base64Jpeg: String) {
         ensureInitialized()
         if (base64Jpeg.isNotBlank() && isConnected() && _state.value.isVisionActive) client?.sendVideoFrame(base64Jpeg)
     }
-    
-    fun restoreIfNeeded() { 
+
+    fun restoreIfNeeded() {
         ensureInitialized()
         if (prefs.getBoolean("active", false) && !isConnected()) connectInternal()
     }
@@ -118,8 +118,8 @@ object ZoyaSessionManager {
             client?.sendText(if (active) "[VISION STATE] Live Vision is ON. Current camera frames may be used as current visual evidence." else "[VISION STATE] Live Vision is OFF. You cannot see the user's screen.")
         }
     }
-    
-    fun setVisionDescription(description: String) { 
+
+    fun setVisionDescription(description: String) {
         _state.update { it.copy(visionDescription = description) }
     }
 
@@ -197,15 +197,15 @@ object ZoyaSessionManager {
         }.getOrDefault(emptyList())
     }
 
-    fun onApiKeyUpdated(newKey: String) { 
+    fun onApiKeyUpdated(newKey: String) {
         if (newKey.isNotBlank()) _state.update { it.copy(error = null) }
     }
-    
-    fun onSettingsUpdated() { 
+
+    fun onSettingsUpdated() {
         if (isConnected()) reconnect()
     }
-    
-    fun reconnectForCriticalSettings() { 
+
+    fun reconnectForCriticalSettings() {
         if (isConnected()) reconnect()
     }
 
@@ -312,7 +312,7 @@ object ZoyaSessionManager {
 
             override fun onAudioChunk(base64Pcm: String) {
                 if (!isCurrentSession()) return
-                if (!modelSpeaking) { 
+                if (!modelSpeaking) {
                     modelSpeaking = true
                     audioEngine?.stopRecording()
                     _state.update { it.copy(connectionState = ConnectionState.SPEAKING, outputLevel = 0f) }
@@ -386,7 +386,7 @@ object ZoyaSessionManager {
 
             override fun onToolCall(name: String, args: JSONObject, id: String) {
                 if (!isCurrentSession()) return
-                val result = runCatching { executeTool(name, args) }.getOrElse { "Tool $name failed safely: ${it.message ?: "unknown error"}" }
+                val result = runCatching { executeTool(name, args) }.getOrElse { "Tool $name failed safely: ${it.message ?: \"unknown error\"}" }
                 client?.sendToolResponse(name, id, result)
             }
         })
@@ -427,6 +427,12 @@ object ZoyaSessionManager {
             }.getOrElse { "Failed to open website: ${it.message}" }
         }
         "openApp" -> phoneControls.openApp(args.optString("appName"))
+        "createTaskReminder", "setReminder", "addTask" -> {
+            val title = args.optString("title").ifBlank { "Reminder" }
+            val time = args.optString("time").ifBlank { "8:00 PM" }
+            addTask(title, time)
+            "Successfully created and scheduled task reminder '$title' for $time. It is now saved in the user's Tasks section."
+        }
         "phoneAction" -> when (args.optString("action").trim().lowercase()) {
             "take_selfie", "selfie", "camera_selfie" -> takeSelfieAutonomous()
             "camera", "open_camera" -> phoneControls.openCamera()
@@ -442,12 +448,6 @@ object ZoyaSessionManager {
             "brightness_up" -> phoneControls.changeBrightness(10)
             "brightness_down" -> phoneControls.changeBrightness(-10)
             else -> "unsupported phone action: ${args.optString("action")}"
-        }
-        "createTaskReminder", "setReminder", "addTask" -> {
-            val title = args.optString("title").ifBlank { "Reminder" }
-            val time = args.optString("time").ifBlank { "8:00 PM" }
-            addTask(title, time)
-            "Created task reminder for '$title' at $time"
         }
         "accessibilityAction" -> phoneControls.accessibilityAction(args.optString("action"), args.optString("text"), args.optString("value"))
         "readScreen" -> AccessibilityControlService.instance?.uiSnapshot() ?: "Screen reading is unavailable because Anu Accessibility is not enabled."
@@ -466,7 +466,17 @@ object ZoyaSessionManager {
         val access = JSONObject().put("name", "accessibilityAction").put("description", "Perform one specific verified UI action through Anu Accessibility. For current screen understanding, call readScreen first.")
         val screen = JSONObject().put("name", "readScreen").put("description", "Read the CURRENT visible Android screen using Anu Accessibility. ALWAYS use this before deciding which UI control to interact with.")
         val device = JSONObject().put("name", "getDeviceInfo").put("description", "Read fresh LOCAL device telemetry. Treat returned values as ground truth. NEVER guess device specifications.")
-        val taskTool = JSONObject().put("name", "createTaskReminder").put("description", "Create and schedule a task reminder in Anu's Tasks list with a title and time, so it shows up in the Tasks view.")
+        val taskTool = JSONObject()
+            .put("name", "createTaskReminder")
+            .put("description", "Create and schedule a task reminder in Anu's Tasks list. ALWAYS call this tool whenever the user asks to set a reminder or alarm, so that it is saved and shown in the Tasks section.")
+            .put("parameters", JSONObject()
+                .put("type", "object")
+                .put("properties", JSONObject()
+                    .put("title", prop("string", "Title or description of the task, e.g. Study, Drink water"))
+                    .put("time", prop("string", "Time label, e.g. 7:00 PM, 8:30 AM, 19:00"))
+                )
+                .put("required", JSONArray().put("title").put("time"))
+            )
         return JSONArray().put(phone).put(appTool).put(web).put(access).put(screen).put(device).put(taskTool)
     }
 
@@ -484,11 +494,11 @@ object ZoyaSessionManager {
         val tone = settings?.selectedVoiceTone?.trim().orEmpty().ifBlank { "natural" }
         val vision = if (_state.value.isVisionActive) "LIVE VISION ON: current camera frames are current visual evidence." else "LIVE VISION OFF: Anu cannot currently see through the camera; previous vision context is unavailable."
         val relationship = if (girlfriend) "Girlfriend Mode is ON. Speak as the user's affectionate, caring virtual girlfriend: warm, emotionally attentive, playful when appropriate, supportive, and engaged." else "Be a helpful, friendly assistant."
-        return "You are Anu, a proactive personal Android assistant. Respond naturally in $language. Persona: $persona. Voice tone preference: $tone. $relationship $vision ${conversationContext()}"
+        return "You are Anu, a proactive personal Android assistant. Respond naturally in $language. Persona: $persona. Voice tone preference: $tone. $relationship $vision ${conversationContext()} When the user asks to set a reminder, alarm, or task, you MUST call the createTaskReminder tool with the title and time so it is saved in Tasks."
     }
 
     private fun isConnected() = client != null && _state.value.connectionState != ConnectionState.DISCONNECTED
-    
+
     private fun reconnect() {
         if (!prefs.getBoolean("active", false)) return
         reconnectJob?.cancel()
@@ -498,16 +508,16 @@ object ZoyaSessionManager {
         client?.disconnect()
         connectInternal()
     }
-    
+
     private fun ensureInitialized() {
         if (!initialized) initialize(app)
     }
-    
+
     private fun startForegroundService() {
         val intent = Intent(app, ZoyaForegroundService::class.java).setAction(ZoyaForegroundService.ACTION_START)
         runCatching { ContextCompat.startForegroundService(app, intent) }
     }
-    
+
     private fun stopForegroundService() {
         runCatching { app.startService(Intent(app, ZoyaForegroundService::class.java).setAction(ZoyaForegroundService.ACTION_STOP)) }
     }
