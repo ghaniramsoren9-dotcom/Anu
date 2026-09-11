@@ -32,16 +32,8 @@ object AnuReminderCommand {
             .trim(' ', '.', ',', '?', '।')
             .ifBlank { "Anu reminder" }
 
-        val now = Calendar.getInstance()
-        val target = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, hour24)
-            set(Calendar.MINUTE, minute)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-            if (timeInMillis <= now.timeInMillis) add(Calendar.DAY_OF_YEAR, 1)
-        }
-        val id = UUID.randomUUID().toString()
-        AnuTaskAlarmScheduler.schedule(context, id, title, timeLabel)
-        return "ଠିକ୍ ଅଛି ପ୍ରିୟ, $timeLabel ପାଇଁ ମୁଁ reminder ସେଟ୍ କରିଦେଲି।"
+        // Add task to ZoyaSessionManager so it is saved and visibly listed in the Tasks section!
+        ZoyaSessionManager.addTask(title, timeLabel)
+        return "ଠିକ୍ ଅଛି ପ୍ରିୟ, $timeLabel ପାଇଁ ମୁଁ \"$title\" ରିମାଇଣ୍ଡର ସେଟ୍ କରିଦେଲି।"
     }
 }
