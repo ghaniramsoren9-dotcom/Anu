@@ -47,11 +47,13 @@ object ProactiveEventEngine {
         val stamp = lastDispatch.getOrPut(key) { AtomicLong(0L) }
         val previous = stamp.get()
         if (now - previous < DEBOUNCE_MS || !stamp.compareAndSet(previous, now)) return
-        val timeInfo = if (timeLabel.isNotBlank()) " (scheduled for $timeLabel)" else ""
+        val timeInfo = if (timeLabel.isNotBlank()) " at $timeLabel" else ""
         ProactiveVoiceBridge.dispatch(
             context,
-            "[PROACTIVE SYSTEM EVENT] It is time for the user's scheduled reminder: \"$title\"$timeInfo.\n" +
-                "Speak to the user immediately in a warm, caring, and alert voice to announce this reminder. Do not stay silent. Announce the task clearly now."
+            "[PROACTIVE SYSTEM EVENT] SPECIFIC REMINDER ALERT: It is time for \"$title\"$timeInfo.\n" +
+                "STRICT INSTRUCTION: Speak ONLY about this single reminder \"$title\". " +
+                "Do NOT mention, list, or speak about any other tasks or reminders from the screen or memory. " +
+                "Say one short, warm sentence in the user's language reminding them to do \"$title\" now."
         )
     }
 
@@ -86,7 +88,6 @@ object ProactiveEventEngine {
 
         val tick = object : Runnable {
             override fun run() {
-                if (!ambientRunning) return
                 val currentStore = runCatching { AnuSettingsStore.getInstance(app) }.getOrNull()
                 if (currentStore?.proactiveAnu == true) {
                     runCatching {
@@ -115,15 +116,10 @@ object ProactiveEventEngine {
                         }
                     }
                 }
-                if (ambientRunning) handler.postDelayed(this, SCREEN_CHECK_MS)
+                handler.postDelayed(this, SCREEN_CHECK_MS)
             }
         }
         handler.postDelayed(tick, 5_000L)
-    }
-
-    fun stopAmbientScreenAwareness() {
-        ambientRunning = false
-        handler.removeCallbacksAndMessages(null)
     }
 
     fun noteUserActivity() {
