@@ -92,7 +92,10 @@ jobs:
           set -euo pipefail
           STORE_PASSWORD="$(printf '%s' "$ANU_KEYSTORE_PASSWORD" | tr -d '\r\n')"
           test -n "$STORE_PASSWORD"
-          ./gradlew --no-daemon --stacktrace --info clean assembleDebug 2>&1 | tee gradle-build.log
+          # Kotlin 2.0.20's compiler daemon is terminating unexpectedly on the GitHub runner.
+          # Run Kotlin compilation in the Gradle process so the build does not depend on the
+          # separate KotlinCompileDaemon startup/connection.
+          ./gradlew --no-daemon --stacktrace --info -Pkotlin.compiler.execution.strategy=in-process clean assembleDebug 2>&1 | tee gradle-build.log
 
       - name: Verify debug APK
         shell: bash
