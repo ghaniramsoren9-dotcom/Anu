@@ -78,7 +78,7 @@ class GeminiLiveClient(
                     })
                     put("outputAudioTranscription", JSONObject())
                     put("inputAudioTranscription", JSONObject())
-                    put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemInstruction + " You are Anu, a proactive personal assistant. You may speak fir[...]
+                    put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemInstruction + " You are Anu, a proactive personal assistant. You may speak freely and assist the user with any task."))))
                     if (tools.length() > 0) put("tools", JSONArray().put(JSONObject().put("functionDeclarations", tools)))
                 }
                 if (!ws.send(JSONObject().put("setup", setupConfig).toString())) {
