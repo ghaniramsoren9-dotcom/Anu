@@ -86,6 +86,7 @@ object ProactiveEventEngine {
 
         val tick = object : Runnable {
             override fun run() {
+                if (!ambientRunning) return
                 val currentStore = runCatching { AnuSettingsStore.getInstance(app) }.getOrNull()
                 if (currentStore?.proactiveAnu == true) {
                     runCatching {
@@ -114,10 +115,15 @@ object ProactiveEventEngine {
                         }
                     }
                 }
-                handler.postDelayed(this, SCREEN_CHECK_MS)
+                if (ambientRunning) handler.postDelayed(this, SCREEN_CHECK_MS)
             }
         }
         handler.postDelayed(tick, 5_000L)
+    }
+
+    fun stopAmbientScreenAwareness() {
+        ambientRunning = false
+        handler.removeCallbacksAndMessages(null)
     }
 
     fun noteUserActivity() {
