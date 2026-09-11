@@ -36,7 +36,32 @@ object ZoyaSessionManager {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val phoneControls by lazy { PhoneControlManager(app) }
     private val prefs by lazy { app.getSharedPreferences("anu_session", 0) }
-    private val idleQuotes = mapOf(ZoyaLanguage.ODIA to listOf("କୁହ କଣ ହେଲା? ମୁଁ ସବୁ ଶୁଣୁଛି।", "କଣ କରିବା ଦରକାର କୁହ, ମୁଁ ଏଠାରେ ଅଛି।"), ZoyaLanguage.HINDI to listOf("कुछ कहो, मैं सुन रहा हूँ।", "तुम्हें क्या चाहिए?"), ZoyaLanguage.SANTALI to listOf("Apom eta incha? Ako sengetkom.", "Ha apom daka?"), ZoyaLanguage.ENGLISH to listOf("What's up? I'm listening.", "Tell me something."))
+    private val idleQuotes = mapOf(
+        ZoyaLanguage.ODIA to listOf(
+            "କୁହ କଣ ହେଲା? ମୁଁ ସବୁ ଶୁଣୁଛି।",
+            "କଣ କରିବା ଦରକାର କୁହ, ମୁଁ ଏଠାଏ ଅଛି।",
+            "ଆପଣ ଠିକ ଅଛନ୍ତି?",
+            "ମୁଁ ସବୁ ବୁଝିପାରିଛି।"
+        ),
+        ZoyaLanguage.HINDI to listOf(
+            "आप कहें, मैं सुन रहा हूँ।",
+            "क्या बताना चाहते हो?",
+            "मैं यहाँ हूँ।",
+            "बस कहो, मैं समझ जाऊँगा।"
+        ),
+        ZoyaLanguage.ENGLISH to listOf(
+            "What's up? I'm listening.",
+            "Tell me something.",
+            "I'm here for you.",
+            "What can I do for you?"
+        ),
+        ZoyaLanguage.SANTALI to listOf(
+            "Aha kan da? Menda hor asa.",
+            "Insaan me khob asa.",
+            "Insaan hor asa.",
+            "Re kan a me, menda hor asa."
+        )
+    )
 
     fun initialize(application: Application) {
         app = application
@@ -115,7 +140,7 @@ object ZoyaSessionManager {
             visionDescription = if (active) it.visionDescription else if (it.visionDescription.isBlank()) "Live Vision is OFF. The last camera observation is unavailable." else it.visionDescription
         ) }
         if (isConnected()) {
-            client?.sendText(if (active) "[VISION STATE] Live Vision is ON. Current camera frames may be used as current visual evidence." else "[VISION STATE] Live Vision is OFF. You cannot see the camera.")
+            client?.sendText(if (active) "[VISION STATE] Live Vision is ON. Current camera frames may be used as current visual evidence." else "[VISION STATE] Live Vision is OFF. You cannot see through the camera. You can only reference the last saved vision snapshot, if available.")
         }
     }
 
@@ -386,7 +411,7 @@ object ZoyaSessionManager {
 
             override fun onToolCall(name: String, args: JSONObject, id: String) {
                 if (!isCurrentSession()) return
-                val result = runCatching { executeTool(name, args) }.getOrElse { "Tool $name failed safely: ${it.message ?: \"unknown error\"}" }
+                val result = runCatching { executeTool(name, args) }.getOrElse { "Tool $name failed safely: ${it.message ?: "unknown error"}" }
                 client?.sendToolResponse(name, id, result)
             }
         })
@@ -460,15 +485,15 @@ object ZoyaSessionManager {
 
     private fun buildToolDeclarations(): JSONArray {
         fun prop(type: String, description: String) = JSONObject().put("type", type).put("description", description)
-        val phone = JSONObject().put("name", "phoneAction").put("description", "Execute exactly one explicit phone action. Use take_selfie ONLY when the user asks to take a selfie; it performs camera actions.")
+        val phone = JSONObject().put("name", "phoneAction").put("description", "Execute exactly one explicit phone action. Use take_selfie ONLY when the user asks to take a selfie; it performs camera operations (open, flip to front, trigger shutter) autonomously via accessibility.")
         val appTool = JSONObject().put("name", "openApp").put("description", "Open an installed Android app by its visible name. Do not claim success unless the tool returns opened.")
         val web = JSONObject().put("name", "openWebsite").put("description", "Open a website in the user's browser. Only call this when the user explicitly asks to open a website or web page.")
         val access = JSONObject().put("name", "accessibilityAction").put("description", "Perform one specific verified UI action through Anu Accessibility. For current screen understanding, call readScreen first.")
-        val screen = JSONObject().put("name", "readScreen").put("description", "Read the CURRENT visible Android screen using Anu Accessibility. ALWAYS use this before deciding which UI control to interact with.")
+        val screen = JSONObject().put("name", "readScreen").put("description", "Read the CURRENT visible Android screen using Anu Accessibility. ALWAYS use this before deciding which UI control to interact with or what is displayed.")
         val device = JSONObject().put("name", "getDeviceInfo").put("description", "Read fresh LOCAL device telemetry. Treat returned values as ground truth. NEVER guess device specifications.")
         val taskTool = JSONObject()
             .put("name", "createTaskReminder")
-            .put("description", "Create and schedule a task reminder in Anu's Tasks list. ALWAYS call this tool whenever the user asks to set a reminder or alarm, so that it is saved and shown in Anu's UI.")
+            .put("description", "Create and schedule a task reminder in Anu's Tasks list. ALWAYS call this tool whenever the user asks to set a reminder or alarm, so that it is saved and shown in the task UI.")
             .put("parameters", JSONObject()
                 .put("type", "object")
                 .put("properties", JSONObject()
@@ -492,8 +517,8 @@ object ZoyaSessionManager {
         val girlfriend = settings?.girlfriendMode == true
         val userName = settings?.userName?.trim().orEmpty().ifBlank { "the user" }
         val tone = settings?.selectedVoiceTone?.trim().orEmpty().ifBlank { "natural" }
-        val vision = if (_state.value.isVisionActive) "LIVE VISION ON: current camera frames are current visual evidence." else "LIVE VISION OFF: Anu cannot currently see through the camera; previous observations may be referenced."
-        val relationship = if (girlfriend) "Girlfriend Mode is ON. Speak as the user's affectionate, caring virtual girlfriend: warm, emotionally attentive, playful when appropriate, supportive, genuine." else ""
+        val vision = if (_state.value.isVisionActive) "LIVE VISION ON: current camera frames are current visual evidence." else "LIVE VISION OFF: Anu cannot currently see through the camera; previous snapshots or descriptions may exist in memory."
+        val relationship = if (girlfriend) "Girlfriend Mode is ON. Speak as the user's affectionate, caring virtual girlfriend: warm, emotionally attentive, playful when appropriate, supportive, and deeply invested in their life and wellbeing." else "Standard mode."
         return "You are Anu, a proactive personal Android assistant. Respond naturally in $language. Persona: $persona. Voice tone preference: $tone. $relationship $vision ${conversationContext()}"
     }
 
