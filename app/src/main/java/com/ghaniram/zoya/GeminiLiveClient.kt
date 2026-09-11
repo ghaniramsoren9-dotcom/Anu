@@ -93,7 +93,7 @@ class GeminiLiveClient(
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
                 mainHandler.removeCallbacks(setupTimeout)
                 val http = response?.let { " HTTP ${it.code}" } ?: ""
-                fail("Gemini Live WebSocket failed$http: ${t.message ?: \"unknown network error\"}")
+                fail("Gemini Live WebSocket failed$http: ${t.message ?: "unknown network error"}")
             }
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
                 mainHandler.removeCallbacks(setupTimeout)
