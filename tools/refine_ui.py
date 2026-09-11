@@ -77,178 +77,106 @@ s = s.replace(
     'Surface(modifier = modifier.clickable(onClick = onClick), shape = RoundedCornerShape(13.dp), color = AnuSurface, tonalElevation = 2.dp)'
 )
 
-# Robust Tasks Dialog replacement:
-imports = [
-    "import android.app.TimePickerDialog\n",
-    "import java.util.Calendar\n",
-    "import java.util.Locale\n",
-    "import androidx.compose.material.icons.filled.Schedule\n",
-    "import androidx.compose.material3.AssistChip\n"
-]
-for imp in imports:
-    if imp not in s:
-        s = imp + s
+# Direct enhancement of the Tasks Time Input from screenshot
+if "anuTimePickerDialog" not in s:
+    imports = [
+        "import android.app.TimePickerDialog\n",
+        "import java.util.Calendar\n",
+        "import java.util.Locale\n",
+        "import androidx.compose.material.icons.filled.Schedule\n",
+        "import androidx.compose.material3.ButtonDefaults\n",
+        "import androidx.compose.foundation.layout.PaddingValues\n",
+        "import androidx.compose.foundation.shape.RoundedCornerShape\n"
+    ]
+    for imp in imports:
+        if imp not in s:
+            s = imp + s
 
-def replace_dialog_in_source(src):
-    # Strategy 1: Find by Tasks screen marker
-    for marker in ["Your reminders and scheduled actions.", "+ Add new task", "Add new task", "tasks planned"]:
-        pos = src.find(marker)
-        if pos != -1:
-            alert_idx = src.find("AlertDialog", pos)
-            if alert_idx != -1 and alert_idx - pos < 5000:
-                if_idx = src.rfind("if (", 0, alert_idx)
-                if if_idx != -1:
-                    brace_open = src.find("{", if_idx)
-                    if brace_open != -1 and brace_open < alert_idx:
-                        count = 1
-                        i = brace_open + 1
-                        while i < len(src) and count > 0:
-                            if src[i] == '{': count += 1
-                            elif src[i] == '}': count -= 1
-                            i += 1
-                        if count == 0:
-                            block = src[if_idx:i]
-                            var_m = re.search(r'if\s*\(\s*([A-Za-z0-9_]+)\s*\)', block)
-                            if var_m:
-                                dialog_var = var_m.group(1)
-                                cb_m = re.search(r'([A-Za-z0-9_\.]+\s*\(\s*[A-Za-z0-9_]+\s*,\s*[A-Za-z0-9_]+\s*\))', block)
-                                cb_call = cb_m.group(1).split('(')[0].strip() if cb_m else "onAdd"
-                                rep = f"""if ({dialog_var}) {{
-        AnuEnhancedAddTaskDialog(
-            onDismiss = {{ {dialog_var} = false }},
-            onAdd = {{ t, tm -> {cb_call}(t, tm) }}
-        )
-    }}"""
-                                print(f"Replaced Tasks Dialog (Strategy 1, var: {dialog_var}, callback: {cb_call})")
-                                return src[:if_idx] + rep + src[i:]
-    return src
+    marker = "Time (e.g. 7:00 PM)"
+    pos = s.find(marker)
+    if pos == -1:
+        marker = "7:00 PM"
+        pos = s.find(marker)
+    
+    if pos != -1:
+        field_start = s.rfind("OutlinedTextField(", 0, pos)
+        if field_start == -1:
+            field_start = s.rfind("TextField(", 0, pos)
+        
+        if field_start != -1:
+            brace_open = s.find("(", field_start)
+            count = 1
+            i = brace_open + 1
+            while i < len(s) and count > 0:
+                if s[i] == '(': count += 1
+                elif s[i] == ')': count -= 1
+                i += 1
+            field_end = i
+            field_text = s[field_start:field_end]
 
-s = replace_dialog_in_source(s)
+            time_var_m = re.search(r'value\s*=\s*([A-Za-z0-9_]+)', field_text)
+            time_var = time_var_m.group(1) if time_var_m else "taskTime"
 
-if "AnuEnhancedAddTaskDialog" not in s:
-    dialog_composable = """
-
-@Composable
-private fun AnuEnhancedAddTaskDialog(
-    onDismiss: () -> Unit,
-    onAdd: (String, String) -> Unit
-) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    var title by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
-    val now = Calendar.getInstance().apply { add(Calendar.MINUTE, 30) }
-    val initialTime = String.format(Locale.US, "%d:%02d %s",
-        if (now.get(Calendar.HOUR) == 0) 12 else now.get(Calendar.HOUR),
-        now.get(Calendar.MINUTE),
-        if (now.get(Calendar.AM_PM) == Calendar.AM) "AM" else "PM"
-    )
-    var time by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(initialTime) }
-
-    val timePickerDialog = androidx.compose.runtime.remember {
-        TimePickerDialog(
-            context,
-            { _, hourOfDay, minute ->
-                val ampm = if (hourOfDay >= 12) "PM" else "AM"
-                val h12 = when {
-                    hourOfDay == 0 -> 12
-                    hourOfDay > 12 -> hourOfDay - 12
-                    else -> hourOfDay
-                }
-                time = String.format(Locale.US, "%d:%02d %s", h12, minute, ampm)
-            },
-            now.get(Calendar.HOUR_OF_DAY),
-            now.get(Calendar.MINUTE),
-            false
-        )
-    }
-
-    fun setOffsetMinutes(minutes: Int) {
-        val cal = Calendar.getInstance().apply { add(Calendar.MINUTE, minutes) }
-        val ampm = if (cal.get(Calendar.AM_PM) == Calendar.AM) "AM" else "PM"
-        val h = if (cal.get(Calendar.HOUR) == 0) 12 else cal.get(Calendar.HOUR)
-        time = String.format(Locale.US, "%d:%02d %s", h, cal.get(Calendar.MINUTE), ampm)
-    }
-
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { androidx.compose.material3.Text("Add Task Reminder", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) },
-        text = {
-            androidx.compose.foundation.layout.Column(
-                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)
-            ) {
-                androidx.compose.material3.OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { androidx.compose.material3.Text("Task Title") },
-                    placeholder = { androidx.compose.material3.Text("e.g. Study, Drink water") },
-                    singleLine = true,
-                    modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
-                )
-
-                androidx.compose.material3.OutlinedTextField(
-                    value = time,
-                    onValueChange = { time = it },
-                    label = { androidx.compose.material3.Text("Reminder Time") },
-                    trailingIcon = {
-                        androidx.compose.material3.IconButton(onClick = { timePickerDialog.show() }) {
-                            androidx.compose.material3.Icon(
-                                androidx.compose.material.icons.Icons.Filled.Schedule,
-                                contentDescription = "Pick Time",
-                                tint = androidx.compose.material3.MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    },
-                    modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
-                )
-
-                androidx.compose.material3.Text("Quick Presets:", fontSize = 11.sp, color = AnuMuted)
-
-                androidx.compose.foundation.layout.Row(
-                    modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
-                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)
-                ) {
-                    androidx.compose.material3.AssistChip(
-                        onClick = { setOffsetMinutes(15) },
-                        label = { androidx.compose.material3.Text("+15m", fontSize = 10.sp) }
+            replacement = f"""val anuContext = androidx.compose.ui.platform.LocalContext.current
+                    val anuCalendar = java.util.Calendar.getInstance()
+                    val anuTimePickerDialog = androidx.compose.runtime.remember {{
+                        android.app.TimePickerDialog(
+                            anuContext,
+                            {{ _, h, m ->
+                                val ampm = if (h >= 12) "PM" else "AM"
+                                val h12 = if (h % 12 == 0) 12 else h % 12
+                                {time_var} = String.format(java.util.Locale.US, "%d:%02d %s", h12, m, ampm)
+                            }},
+                            anuCalendar.get(java.util.Calendar.HOUR_OF_DAY),
+                            anuCalendar.get(java.util.Calendar.MINUTE),
+                            false
+                        )
+                    }}
+                    OutlinedTextField(
+                        value = {time_var},
+                        onValueChange = {{ {time_var} = it }},
+                        label = {{ Text("Time (e.g. 7:00 PM)") }},
+                        trailingIcon = {{
+                            IconButton(onClick = {{ anuTimePickerDialog.show() }}) {{
+                                Icon(
+                                    Icons.Filled.Schedule,
+                                    contentDescription = "Pick Time",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }}
+                        }},
+                        modifier = Modifier.fillMaxWidth()
                     )
-                    androidx.compose.material3.AssistChip(
-                        onClick = { setOffsetMinutes(30) },
-                        label = { androidx.compose.material3.Text("+30m", fontSize = 10.sp) }
-                    )
-                    androidx.compose.material3.AssistChip(
-                        onClick = { setOffsetMinutes(60) },
-                        label = { androidx.compose.material3.Text("+1h", fontSize = 10.sp) }
-                    )
-                    androidx.compose.material3.AssistChip(
-                        onClick = { timePickerDialog.show() },
-                        label = { androidx.compose.material3.Text("🕒 Clock", fontSize = 10.sp) }
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            androidx.compose.material3.Button(
-                onClick = {
-                    if (title.isNotBlank() && time.isNotBlank()) {
-                        onAdd(title.trim(), time.trim())
-                        onDismiss()
-                    }
-                },
-                enabled = title.isNotBlank() && time.isNotBlank()
-            ) {
-                androidx.compose.material3.Text("Add Reminder")
-            }
-        },
-        dismissButton = {
-            androidx.compose.material3.TextButton(onClick = onDismiss) {
-                androidx.compose.material3.Text("Cancel")
-            }
-        }
-    )
-}
-"""
-    s += dialog_composable
+                    Spacer(Modifier.height(6.dp))
+                    Text("Quick Presets:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {{
+                        listOf(15 to "+15m", 30 to "+30m", 60 to "+1h").forEach {{ (min, label) ->
+                            Button(
+                                onClick = {{
+                                    val cal = java.util.Calendar.getInstance().apply {{ add(java.util.Calendar.MINUTE, min) }}
+                                    val ampm = if (cal.get(java.util.Calendar.AM_PM) == java.util.Calendar.AM) "AM" else "PM"
+                                    val h = if (cal.get(java.util.Calendar.HOUR) == 0) 12 else cal.get(java.util.Calendar.HOUR)
+                                    {time_var} = String.format(java.util.Locale.US, "%d:%02d %s", h, cal.get(java.util.Calendar.MINUTE), ampm)
+                                }},
+                                shape = RoundedCornerShape(14.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer),
+                                modifier = Modifier.height(32.dp)
+                            ) {{ Text(label, fontSize = 11.sp) }}
+                        }}
+                        Button(
+                            onClick = {{ anuTimePickerDialog.show() }},
+                            shape = RoundedCornerShape(14.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary),
+                            modifier = Modifier.height(32.dp)
+                        ) {{ Text("🕒 Clock", fontSize = 11.sp) }}
+                    }}"""
+            s = s[:field_start] + replacement + s[field_end:]
 
 path.write_text(s, encoding="utf-8")
-print("Applied reference-inspired UI polish and enhanced task time picker to MainActivity.kt")
+print("Tasks time input enhanced successfully.")
