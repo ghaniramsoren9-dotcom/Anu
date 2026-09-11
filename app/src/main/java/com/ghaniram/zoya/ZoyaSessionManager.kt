@@ -36,12 +36,7 @@ object ZoyaSessionManager {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val phoneControls by lazy { PhoneControlManager(app) }
     private val prefs by lazy { app.getSharedPreferences("anu_session", 0) }
-    private val idleQuotes = mapOf(
-        ZoyaLanguage.ODIA to listOf("କୁହ କଣ ହେଲା? ମୁଁ ସବୁ ଶୁଣୁଛି।", "କଣ କରିବା ଦରକାର କୁହ, ମୁଁ ଏଠାଏ ଅଛି।"),
-        ZoyaLanguage.HINDI to listOf("आप क्या कहना चाहते हैं?", "मैं सुन रहा हूँ।"),
-        ZoyaLanguage.SANTALI to listOf("Aha do min? Senme lete.", "Muse do sen."),
-        ZoyaLanguage.ENGLISH to listOf("Hi, what can I do for you?", "I'm here to help.")
-    )
+    private val idleQuotes = mapOf(ZoyaLanguage.ODIA to listOf("କୁହ କଣ ହେଲା? ମୁଁ ସବୁ ଶୁଣୁଛି।", "କଣ କରିବା ଦରକାର କୁହ, ମୁଁ ପ୍ରସ୍ତୁତ।"), ZoyaLanguage.ENGLISH to listOf("Go ahead, I'm listening.", "What can I do for you?"), ZoyaLanguage.HINDI to listOf("बोलिए, मैं सुन रही हूँ।", "आपके लिए क्या करूँ?"), ZoyaLanguage.SANTALI to listOf("ᱤᱧ ᱥᱟᱶ ᱜᱟᱞᱢᱟᱨᱟᱣ ᱢᱮ ᱾"))
 
     fun initialize(application: Application) {
         app = application
@@ -50,23 +45,14 @@ object ZoyaSessionManager {
         // App launch is intentionally idle. A manual/explicit connect is required.
         prefs.edit().putBoolean("active", false).apply()
         val language = runCatching { ZoyaLanguage.valueOf(prefs.getString("language", ZoyaLanguage.ODIA.name) ?: ZoyaLanguage.ODIA.name) }.getOrDefault(ZoyaLanguage.ODIA)
-        _state.value = ZoyaUiState(language = language, quote = idleQuotes[language]?.random().orEmpty())
+        _state.value = ZoyaUiState(language = language, quote = idleQuotes[language]?.random().orEmpty(), tasks = loadTasks())
         scope.launch { runCatching { repository.allMemoriesFlow.collect { memories -> _state.update { it.copy(memories = memories) } } } }
         scope.launch { runCatching { repository.allChatMessagesFlow.collect { messages -> _state.update { it.copy(chatMessages = messages) } } } }
     }
 
-    fun setLanguage(lang: ZoyaLanguage) {
-        ensureInitialized()
-        prefs.edit().putString("language", lang.name).apply()
-        _state.update { it.copy(language = lang, quote = idleQuotes[lang]?.random().orEmpty()) }
-    }
+    fun setLanguage(lang: ZoyaLanguage) { ensureInitialized(); prefs.edit().putString("language", lang.name).apply(); _state.update { it.copy(language = lang, quote = idleQuotes[lang]?.random().orEmpty()) }; if (isConnected()) reconnect() }
 
-    fun connect() {
-        ensureInitialized()
-        prefs.edit().putBoolean("active", true).apply()
-        startForegroundService()
-        connectInternal()
-    }
+    fun connect() { ensureInitialized(); prefs.edit().putBoolean("active", true).apply(); startForegroundService(); connectInternal() }
 
     fun connectForProactive(prompt: String) {
         ensureInitialized()
@@ -79,43 +65,14 @@ object ZoyaSessionManager {
     }
 
     fun disconnect() {
-        ensureInitialized()
-        prefs.edit().putBoolean("active", false).apply()
-        reconnectJob?.cancel()
-        reconnectJob = null
-        sessionRenewalJob?.cancel()
-        sessionRenewalJob = null
-        proactivePlaybackOnly = false
-        connectionGeneration++
-        client?.disconnect()
-        audioEngine?.release()
-        client = null
-        audioEngine = null
-        modelSpeaking = false
-        stopForegroundService()
+        ensureInitialized(); prefs.edit().putBoolean("active", false).apply(); reconnectJob?.cancel(); reconnectJob = null; sessionRenewalJob?.cancel(); sessionRenewalJob = null
+        proactivePlaybackOnly = false; connectionGeneration++; client?.disconnect(); audioEngine?.release(); client = null; audioEngine = null; modelSpeaking = false; stopForegroundService()
         _state.update { it.copy(connectionState = ConnectionState.DISCONNECTED, inputLevel = 0f, outputLevel = 0f, isAnuResponding = false) }
     }
 
-    fun startVisionSession() {
-        ensureInitialized()
-        prefs.edit().putBoolean("active", true).apply()
-        startForegroundService()
-        if (!isConnected()) connectInternal()
-    }
-
-    fun sendVisionFrame(base64Jpeg: String) {
-        ensureInitialized()
-        if (base64Jpeg.isNotBlank() && isConnected() && _state.value.isVisionActive) {
-            client?.sendVideoFrame(base64Jpeg)
-        }
-    }
-
-    fun restoreIfNeeded() {
-        ensureInitialized()
-        if (prefs.getBoolean("active", false) && !isConnected()) {
-            connectInternal()
-        }
-    }
+    fun startVisionSession() { ensureInitialized(); prefs.edit().putBoolean("active", true).apply(); startForegroundService(); if (!isConnected()) connectInternal() }
+    fun sendVisionFrame(base64Jpeg: String) { ensureInitialized(); if (base64Jpeg.isNotBlank() && isConnected() && _state.value.isVisionActive) client?.sendVideoFrame(base64Jpeg) }
+    fun restoreIfNeeded() { ensureInitialized(); if (prefs.getBoolean("active", false) && !isConnected()) connectInternal() }
 
     fun setVisionActive(active: Boolean) {
         ensureInitialized()
@@ -127,30 +84,22 @@ object ZoyaSessionManager {
             client?.sendText(if (active) "[VISION STATE] Live Vision is ON. Current camera frames may be used as current visual evidence." else "[VISION STATE] Live Vision is OFF. You cannot see the camera.")
         }
     }
-
-    fun setVisionDescription(description: String) {
-        _state.update { it.copy(visionDescription = description) }
-    }
+    fun setVisionDescription(description: String) { _state.update { it.copy(visionDescription = description) } }
 
     fun sendText(text: String) {
-        ensureInitialized()
-        val clean = text.trim()
-        if (clean.isBlank()) return
+        ensureInitialized(); val clean = text.trim(); if (clean.isBlank()) return
         val proactive = clean.startsWith("[PROACTIVE SYSTEM EVENT]")
         if (!proactive) {
             ProactiveEventEngine.noteUserActivity()
             val msg = ChatMessage(UUID.randomUUID().toString(), ChatRole.USER, clean, System.currentTimeMillis())
             _state.update { it.copy(chatMessages = it.chatMessages + msg, error = null, isAnuResponding = true) }
             scope.launch { repository.saveChatMessage(msg) }
-        } else {
-            _state.update { it.copy(error = null, isAnuResponding = true) }
-        }
+        } else _state.update { it.copy(error = null, isAnuResponding = true) }
         val key = runCatching { AnuSettingsStore.getInstance(app)?.customGeminiKey?.trim().orEmpty() }.getOrDefault("")
         if (key.isBlank()) {
             if (!proactive) {
                 val msg = ChatMessage(UUID.randomUUID().toString(), ChatRole.ANU, "Please add your Gemini API key in Settings.", System.currentTimeMillis())
-                _state.update { it.copy(chatMessages = it.chatMessages + msg, isAnuResponding = false) }
-                scope.launch { repository.saveChatMessage(msg) }
+                _state.update { it.copy(chatMessages = it.chatMessages + msg, isAnuResponding = false) }; scope.launch { repository.saveChatMessage(msg) }
             }
             return
         }
@@ -160,34 +109,57 @@ object ZoyaSessionManager {
 
     fun addTask(title: String, time: String) {
         val task = AnuTask(UUID.randomUUID().toString(), title, time, false)
-        _state.update { it.copy(tasks = it.tasks + task) }
+        val updated = _state.value.tasks + task
+        _state.update { it.copy(tasks = updated) }
+        saveTasks(updated)
         AnuTaskAlarmScheduler.schedule(app, task)
     }
 
     fun toggleTask(id: String) {
         val task = _state.value.tasks.firstOrNull { it.id == id } ?: return
         val updated = task.copy(isCompleted = !task.isCompleted)
-        _state.update { s -> s.copy(tasks = s.tasks.map { if (it.id == id) updated else it }) }
+        val updatedList = _state.value.tasks.map { if (it.id == id) updated else it }
+        _state.update { s -> s.copy(tasks = updatedList) }
+        saveTasks(updatedList)
+        if (updated.isCompleted) AnuTaskAlarmScheduler.cancel(app, id) else AnuTaskAlarmScheduler.schedule(app, updated)
     }
 
     fun deleteTask(id: String) {
+        val updatedList = _state.value.tasks.filterNot { it.id == id }
+        _state.update { s -> s.copy(tasks = updatedList) }
+        saveTasks(updatedList)
         AnuTaskAlarmScheduler.cancel(app, id)
-        _state.update { s -> s.copy(tasks = s.tasks.filterNot { it.id == id }) }
     }
 
-    fun onApiKeyUpdated(newKey: String) {
-        if (newKey.isNotBlank()) {
-            _state.update { it.copy(error = null) }
+    private fun saveTasks(tasks: List<AnuTask>) {
+        val array = JSONArray()
+        tasks.forEach { t ->
+            array.put(JSONObject().apply {
+                put("id", t.id)
+                put("title", t.title)
+                put("time", t.timeLabel)
+                put("done", t.isCompleted)
+            })
         }
+        prefs.edit().putString("saved_tasks", array.toString()).apply()
     }
 
-    fun onSettingsUpdated() {
-        if (isConnected()) reconnect()
+    private fun loadTasks(): List<AnuTask> {
+        val raw = prefs.getString("saved_tasks", null) ?: return emptyList()
+        return runCatching {
+            val array = JSONArray(raw)
+            buildList {
+                for (i in 0 until array.length()) {
+                    val o = array.optJSONObject(i) ?: continue
+                    add(AnuTask(o.optString("id"), o.optString("title"), o.optString("time"), o.optBoolean("done", false)))
+                }
+            }
+        }.getOrDefault(emptyList())
     }
 
-    fun reconnectForCriticalSettings() {
-        if (isConnected()) reconnect()
-    }
+    fun onApiKeyUpdated(newKey: String) { if (newKey.isNotBlank()) _state.update { it.copy(error = null) } }
+    fun onSettingsUpdated() { if (isConnected()) reconnect() }
+    fun reconnectForCriticalSettings() { if (isConnected()) reconnect() }
 
     fun clearMemories() {
         ensureInitialized()
@@ -224,20 +196,13 @@ object ZoyaSessionManager {
     }.getOrDefault("PERSISTENT MEMORY CONTEXT unavailable. Do not invent memories.")
 
     private fun connectInternal() {
-        reconnectJob?.cancel()
-        reconnectJob = null
-        sessionRenewalJob?.cancel()
-        sessionRenewalJob = null
+        reconnectJob?.cancel(); reconnectJob = null
+        sessionRenewalJob?.cancel(); sessionRenewalJob = null
         val generation = ++connectionGeneration
         val settings = runCatching { AnuSettingsStore.getInstance(app) }.getOrNull()
         val apiKey = settings?.customGeminiKey?.trim().orEmpty()
-        if (apiKey.isBlank()) {
-            _state.update { it.copy(error = "Gemini API key is not configured", connectionState = ConnectionState.DISCONNECTED, isAnuResponding = false) }
-            return
-        }
-        client?.disconnect()
-        audioEngine?.release()
-        modelSpeaking = false
+        if (apiKey.isBlank()) { _state.update { it.copy(error = "Gemini API key is not configured", connectionState = ConnectionState.DISCONNECTED, isAnuResponding = false) }; return }
+        client?.disconnect(); audioEngine?.release(); modelSpeaking = false
         _state.update { it.copy(connectionState = ConnectionState.CONNECTING, error = null, inputLevel = 0f, outputLevel = 0f, isAnuResponding = false) }
         audioEngine = AudioEngine(
             { chunk -> if (!modelSpeaking && connectionGeneration == generation && prefs.getBoolean("active", false)) client?.sendAudioChunk(chunk) },
@@ -274,99 +239,69 @@ object ZoyaSessionManager {
 
             override fun onDisconnected() {
                 if (connectionGeneration != generation) return
-                modelSpeaking = false
-                audioEngine?.stopRecording()
-                audioEngine?.flushPlayback()
+                modelSpeaking = false; audioEngine?.stopRecording(); audioEngine?.flushPlayback()
                 _state.update { it.copy(inputLevel = 0f, outputLevel = 0f, isAnuResponding = false, connectionState = if (prefs.getBoolean("active", false)) ConnectionState.CONNECTING else ConnectionState.DISCONNECTED) }
                 if (prefs.getBoolean("active", false)) scheduleReconnect(generation)
             }
 
             override fun onError(message: String) {
                 if (connectionGeneration != generation) return
-                modelSpeaking = false
-                audioEngine?.stopRecording()
-                audioEngine?.flushPlayback()
+                modelSpeaking = false; audioEngine?.stopRecording(); audioEngine?.flushPlayback()
                 _state.update { it.copy(error = message, inputLevel = 0f, outputLevel = 0f, isAnuResponding = false, connectionState = if (prefs.getBoolean("active", false)) ConnectionState.CONNECTING else ConnectionState.DISCONNECTED) }
                 if (prefs.getBoolean("active", false)) scheduleReconnect(generation)
             }
 
             override fun onAudioChunk(base64Pcm: String) {
                 if (!isCurrentSession()) return
-                if (!modelSpeaking) {
-                    modelSpeaking = true
-                    audioEngine?.stopRecording()
-                    _state.update { it.copy(connectionState = ConnectionState.SPEAKING, outputLevel = 0f) }
-                }
+                if (!modelSpeaking) { modelSpeaking = true; audioEngine?.stopRecording(); _state.update { it.copy(connectionState = ConnectionState.SPEAKING, outputLevel = 0f) } }
                 audioEngine?.playChunkBase64(base64Pcm)
             }
 
             override fun onUserText(text: String) {
                 if (!isCurrentSession()) return
-                val clean = text.removePrefix("You:").removePrefix("You :").trim()
-                if (clean.isBlank()) return
-                ProactiveEventEngine.noteUserActivity()
-                val last = _state.value.chatMessages.lastOrNull()
+                val clean = text.removePrefix("You:").removePrefix("You :").trim(); if (clean.isBlank()) return
+                ProactiveEventEngine.noteUserActivity(); val last = _state.value.chatMessages.lastOrNull()
                 if (last != null && last.id == currentUserId && last.role == ChatRole.USER) {
-                    val updated = last.copy(text = clean)
-                    _state.update { s -> s.copy(chatMessages = s.chatMessages.dropLast(1) + updated) }
-                    scope.launch { repository.updateChatMessage(updated) }
+                    val updated = last.copy(text = clean); _state.update { s -> s.copy(chatMessages = s.chatMessages.dropLast(1) + updated) }; scope.launch { repository.updateChatMessage(updated) }
                 } else {
-                    val id = UUID.randomUUID().toString()
-                    currentUserId = id
-                    val msg = ChatMessage(id, ChatRole.USER, clean, System.currentTimeMillis())
-                    _state.update { s -> s.copy(chatMessages = s.chatMessages + msg) }
-                    scope.launch { repository.saveChatMessage(msg) }
+                    val id = UUID.randomUUID().toString(); currentUserId = id; val msg = ChatMessage(id, ChatRole.USER, clean, System.currentTimeMillis()); _state.update { s -> s.copy(chatMessages = s.chatMessages + msg) }; scope.launch { repository.saveChatMessage(msg) }
                 }
             }
 
             override fun onModelText(text: String) {
                 if (!isCurrentSession()) return
-                val clean = text.removePrefix("You:").removePrefix("You :").trim()
-                if (clean.isBlank()) return
+                val clean = text.removePrefix("You:").removePrefix("You :").trim(); if (clean.isBlank()) return
                 val last = _state.value.chatMessages.lastOrNull()
                 if (last != null && last.id == currentAnuId && last.role == ChatRole.ANU) {
-                    val updated = last.copy(text = (last.text + " " + clean).trim())
-                    _state.update { s -> s.copy(chatMessages = s.chatMessages.dropLast(1) + updated, isAnuResponding = false) }
-                    scope.launch { repository.updateChatMessage(updated) }
+                    val updated = last.copy(text = (last.text + " " + clean).trim()); _state.update { s -> s.copy(chatMessages = s.chatMessages.dropLast(1) + updated, isAnuResponding = false) }; scope.launch { repository.updateChatMessage(updated) }
                 } else {
-                    val id = UUID.randomUUID().toString()
-                    currentAnuId = id
-                    val msg = ChatMessage(id, ChatRole.ANU, clean, System.currentTimeMillis())
-                    _state.update { s -> s.copy(chatMessages = s.chatMessages + msg, isAnuResponding = false) }
-                    scope.launch { repository.saveChatMessage(msg) }
+                    val id = UUID.randomUUID().toString(); currentAnuId = id; val msg = ChatMessage(id, ChatRole.ANU, clean, System.currentTimeMillis()); _state.update { s -> s.copy(chatMessages = s.chatMessages + msg, isAnuResponding = false) }; scope.launch { repository.saveChatMessage(msg) }
                 }
             }
 
             override fun onInterrupted() {
                 if (!isCurrentSession()) return
-                modelSpeaking = false
-                currentAnuId = null
-                audioEngine?.flushPlayback()
-                audioEngine?.startRecording()
+                modelSpeaking = false; currentAnuId = null; audioEngine?.flushPlayback(); audioEngine?.startRecording()
                 _state.update { it.copy(connectionState = ConnectionState.LISTENING, inputLevel = 0f, outputLevel = 0f, isAnuResponding = false) }
             }
 
             override fun onTurnComplete() {
                 if (!isCurrentSession()) return
-                currentUserId = null
-                currentAnuId = null
-                _state.update { it.copy(isAnuResponding = false) }
+                currentUserId = null; currentAnuId = null; _state.update { it.copy(isAnuResponding = false) }
                 audioEngine?.whenPlaybackDrained {
                     if (proactivePlaybackOnly) {
                         // Finished speaking proactive alert while mic was off: shut down session immediately!
                         proactivePlaybackOnly = false
                         disconnect()
                     } else if (isCurrentSession()) {
-                        modelSpeaking = false
-                        audioEngine?.startRecording()
-                        _state.update { it.copy(connectionState = ConnectionState.LISTENING, inputLevel = 0f, outputLevel = 0f) }
+                        modelSpeaking = false; audioEngine?.startRecording(); _state.update { it.copy(connectionState = ConnectionState.LISTENING, inputLevel = 0f, outputLevel = 0f) }
                     }
                 }
             }
 
             override fun onToolCall(name: String, args: JSONObject, id: String) {
                 if (!isCurrentSession()) return
-                val result = runCatching { executeTool(name, args) }.getOrElse { "Tool $name failed safely: ${it.message ?: "unknown error"}" }
+                val result = runCatching { executeTool(name, args) }.getOrElse { "Tool $name failed safely: ${it.message ?: \"unknown error\"}" }
                 client?.sendToolResponse(name, id, result)
             }
         })
@@ -383,33 +318,16 @@ object ZoyaSessionManager {
     }
 
     private fun takeSelfieAutonomous(): String {
-        val opened = phoneControls.openCamera()
-        if (!opened.startsWith("opened")) return opened
+        val opened = phoneControls.openCamera(); if (!opened.startsWith("opened")) return opened
         Thread.sleep(1200L)
         val flipped = listOf("switch camera", "flip", "switch", "front", "camera switch", "cameraswitch").any { label -> phoneControls.accessibilityAction("clicktext", label).startsWith("completed") }
         if (flipped) Thread.sleep(800L)
         val shutter = listOf("shutter", "capture", "take photo", "photo", "snap", "shoot").any { label -> phoneControls.accessibilityAction("clicktext", label).startsWith("completed") }
-        return when {
-            shutter && flipped -> "Selfie completed: camera opened, front camera selected, shutter clicked, and UI action verified."
-            shutter -> "Selfie completed: shutter action was verified."
-            flipped -> "Selfie completed: camera opened and front camera selected. Shutter click could not be verified."
-            else -> "Selfie failed: could not locate shutter or camera controls."
-        }
+        return when { shutter && flipped -> "Selfie completed: camera opened, front camera selected, shutter clicked, and UI action verified."; shutter -> "Selfie completed: shutter action was verified, but front-camera switch could not be confirmed."; else -> "Camera opened, but the selfie shutter could not be verified; I did not claim success." }
     }
 
     private fun executeTool(name: String, args: JSONObject): String = when (name) {
-        "openWebsite" -> {
-            val url = args.optString("url").trim()
-            val label = args.optString("name", url)
-            if (url.isBlank()) {
-                "invalid URL"
-            } else {
-                runCatching {
-                    app.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                    "Website opened: $label"
-                }.getOrElse { "Failed to open website: ${it.message}" }
-            }
-        }
+        "openWebsite" -> { val url = args.optString("url").trim(); val label = args.optString("name", url); if (url.isBlank()) "invalid URL" else runCatching { app.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }); "opened $label" }.getOrElse { "could not open $label: ${it.message ?: \"unknown error\"}" } }
         "openApp" -> phoneControls.openApp(args.optString("appName"))
         "phoneAction" -> when (args.optString("action").trim().lowercase()) {
             "take_selfie", "selfie", "camera_selfie" -> takeSelfieAutonomous()
@@ -426,6 +344,12 @@ object ZoyaSessionManager {
             "brightness_up" -> phoneControls.changeBrightness(10)
             "brightness_down" -> phoneControls.changeBrightness(-10)
             else -> "unsupported phone action: ${args.optString("action")}"
+        }
+        "createTaskReminder", "setReminder", "addTask" -> {
+            val title = args.optString("title").ifBlank { "Reminder" }
+            val time = args.optString("time").ifBlank { "8:00 PM" }
+            addTask(title, time)
+            "Created task reminder for '$title' at $time"
         }
         "accessibilityAction" -> phoneControls.accessibilityAction(args.optString("action"), args.optString("text"), args.optString("value"))
         "readScreen" -> AccessibilityControlService.instance?.uiSnapshot() ?: "Screen reading is unavailable because Anu Accessibility is not enabled."
@@ -444,16 +368,12 @@ object ZoyaSessionManager {
         val access = JSONObject().put("name", "accessibilityAction").put("description", "Perform one specific verified UI action through Anu Accessibility. For current screen understanding, call readScreen first.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("action", prop("string", "Action type: clicktext, longpress, swipe")).put("text", prop("string", "Text or label")).put("value", prop("string", "Optional value"))))
         val screen = JSONObject().put("name", "readScreen").put("description", "Read the CURRENT visible Android screen using Anu Accessibility. ALWAYS use this before deciding which UI control to interact with.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject()))
         val device = JSONObject().put("name", "getDeviceInfo").put("description", "Read fresh LOCAL device telemetry. Treat returned values as ground truth. NEVER guess device specifications. Passing an optional query improves response relevance.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("query", prop("string", "Optional device query (e.g., battery_level)"))))
-        return JSONArray().put(phone).put(appTool).put(web).put(access).put(screen).put(device)
+        val taskTool = JSONObject().put("name", "createTaskReminder").put("description", "Create and schedule a task reminder in Anu's Tasks list with a title and time, so it shows up in the Tasks section and alerts the user.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("title", prop("string", "Title of the task")).put("time", prop("string", "Time label, e.g. 7:00 PM, 8:30 AM, 19:00"))))
+        return JSONArray().put(phone).put(appTool).put(web).put(access).put(screen).put(device).put(taskTool)
     }
 
     private fun buildSystemInstruction(): String {
-        val language = when (_state.value.language) {
-            ZoyaLanguage.ODIA -> "Odia"
-            ZoyaLanguage.HINDI -> "Hindi"
-            ZoyaLanguage.SANTALI -> "Santali"
-            ZoyaLanguage.ENGLISH -> "English"
-        }
+        val language = when (_state.value.language) { ZoyaLanguage.ODIA -> "Odia"; ZoyaLanguage.HINDI -> "Hindi"; ZoyaLanguage.SANTALI -> "Santali"; ZoyaLanguage.ENGLISH -> "English" }
         val settings = runCatching { AnuSettingsStore.getInstance(app) }.getOrNull()
         val persona = settings?.persona?.trim().orEmpty().ifBlank { "Anu" }
         val girlfriend = settings?.girlfriendMode == true
@@ -465,26 +385,8 @@ object ZoyaSessionManager {
     }
 
     private fun isConnected() = client != null && _state.value.connectionState != ConnectionState.DISCONNECTED
-    private fun reconnect() {
-        if (!prefs.getBoolean("active", false)) return
-        reconnectJob?.cancel()
-        reconnectJob = null
-        sessionRenewalJob?.cancel()
-        sessionRenewalJob = null
-        client?.disconnect()
-        connectInternal()
-    }
-
-    private fun ensureInitialized() {
-        if (!initialized) initialize(app)
-    }
-
-    private fun startForegroundService() {
-        val intent = Intent(app, ZoyaForegroundService::class.java).setAction(ZoyaForegroundService.ACTION_START)
-        runCatching { ContextCompat.startForegroundService(app, intent) }
-    }
-
-    private fun stopForegroundService() {
-        runCatching { app.startService(Intent(app, ZoyaForegroundService::class.java).setAction(ZoyaForegroundService.ACTION_STOP)) }
-    }
+    private fun reconnect() { if (!prefs.getBoolean("active", false)) return; reconnectJob?.cancel(); reconnectJob = null; sessionRenewalJob?.cancel(); sessionRenewalJob = null; client?.disconnect(); connectInternal() }
+    private fun ensureInitialized() { if (!initialized) initialize(app) }
+    private fun startForegroundService() { val intent = Intent(app, ZoyaForegroundService::class.java).setAction(ZoyaForegroundService.ACTION_START); runCatching { ContextCompat.startForegroundService(app, intent) }.onFailure { runCatching { app.startService(intent) } } }
+    private fun stopForegroundService() { runCatching { app.startService(Intent(app, ZoyaForegroundService::class.java).setAction(ZoyaForegroundService.ACTION_STOP)) } }
 }
