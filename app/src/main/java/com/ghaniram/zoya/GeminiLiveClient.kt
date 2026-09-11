@@ -78,7 +78,7 @@ class GeminiLiveClient(
                     })
                     put("outputAudioTranscription", JSONObject())
                     put("inputAudioTranscription", JSONObject())
-                    put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemInstruction + " You are Anu, a proactive personal assistant. You may speak first when a system event or useful screen observation gives you a clear reason to help. Do not invent observations. Keep unsolicited comments short and relevant. For current India time or the user's current device location, call getDeviceInfo and use its India time/location fields as ground truth. For a request to call a named contact, use accessibilityAction with action=call_contact and text equal to the contact name; do not open the Dialer or merely tell the user to call manually. Execute the tool before claiming the call was placed. When live screen frames are available, treat them as current visual evidence. You can inspect images, video frames, app interfaces, and games visible on the device screen, but only describe what is actually visible in the latest frame. Do not claim to see pixels when screen frames are unavailable."))))
+                    put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemInstruction + " You are Anu, a proactive personal assistant. You may speak fir[...]
                     if (tools.length() > 0) put("tools", JSONArray().put(JSONObject().put("functionDeclarations", tools)))
                 }
                 if (!ws.send(JSONObject().put("setup", setupConfig).toString())) {
@@ -137,7 +137,7 @@ class GeminiLiveClient(
                 for (i in 0 until parts.length()) {
                     val part = parts.optJSONObject(i) ?: continue
                     part.optString("text").takeIf { it.isNotBlank() }?.let { callbacks.onModelText(it) }
-                    part.optJSONObject("inlineData")?.optString("data").takeIf { it.isNotBlank() }?.let { callbacks.onAudioChunk(it) }
+                    part.optJSONObject("inlineData")?.optString("data")?.takeIf { it.isNotBlank() }?.let { callbacks.onAudioChunk(it) }
                 }
             }
             content.optJSONObject("outputTranscription")?.optString("text")?.takeIf { it.isNotBlank() }?.let { callbacks.onModelText(it) }
