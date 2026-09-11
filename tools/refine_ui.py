@@ -77,48 +77,55 @@ s = s.replace(
     'Surface(modifier = modifier.clickable(onClick = onClick), shape = RoundedCornerShape(13.dp), color = AnuSurface, tonalElevation = 2.dp)'
 )
 
-# Enhance Task Reminder Dialog with Native TimePickerDialog & Quick Preset Chips
-if "AnuEnhancedAddTaskDialog" not in s:
-    imports = [
-        "import android.app.TimePickerDialog\n",
-        "import java.util.Calendar\n",
-        "import java.util.Locale\n",
-        "import androidx.compose.material.icons.filled.Schedule\n",
-        "import androidx.compose.material3.AssistChip\n"
-    ]
-    for imp in imports:
-        if imp not in s:
-            s = imp + s
+# Robust Tasks Dialog replacement:
+imports = [
+    "import android.app.TimePickerDialog\n",
+    "import java.util.Calendar\n",
+    "import java.util.Locale\n",
+    "import androidx.compose.material.icons.filled.Schedule\n",
+    "import androidx.compose.material3.AssistChip\n"
+]
+for imp in imports:
+    if imp not in s:
+        s = imp + s
 
-    idx = s.find("viewModel.addTask(")
-    if idx == -1:
-        idx = s.find("addTask(")
-
-    if idx != -1:
-        if_idx = s.rfind("if (", 0, idx)
-        if if_idx != -1:
-            brace_open = s.find("{", if_idx)
-            if brace_open != -1 and brace_open < idx:
-                count = 1
-                i = brace_open + 1
-                while i < len(s) and count > 0:
-                    if s[i] == '{': count += 1
-                    elif s[i] == '}': count -= 1
-                    i += 1
-                if count == 0:
-                    block = s[if_idx:i]
-                    var_m = re.search(r'if\s*\(\s*([A-Za-z0-9_]+)\s*\)', block)
-                    if var_m:
-                        dialog_var = var_m.group(1)
-                        replacement_block = f"""if ({dialog_var}) {{
+def replace_dialog_in_source(src):
+    # Strategy 1: Find by Tasks screen marker
+    for marker in ["Your reminders and scheduled actions.", "+ Add new task", "Add new task", "tasks planned"]:
+        pos = src.find(marker)
+        if pos != -1:
+            alert_idx = src.find("AlertDialog", pos)
+            if alert_idx != -1 and alert_idx - pos < 5000:
+                if_idx = src.rfind("if (", 0, alert_idx)
+                if if_idx != -1:
+                    brace_open = src.find("{", if_idx)
+                    if brace_open != -1 and brace_open < alert_idx:
+                        count = 1
+                        i = brace_open + 1
+                        while i < len(src) and count > 0:
+                            if src[i] == '{': count += 1
+                            elif src[i] == '}': count -= 1
+                            i += 1
+                        if count == 0:
+                            block = src[if_idx:i]
+                            var_m = re.search(r'if\s*\(\s*([A-Za-z0-9_]+)\s*\)', block)
+                            if var_m:
+                                dialog_var = var_m.group(1)
+                                cb_m = re.search(r'([A-Za-z0-9_\.]+\s*\(\s*[A-Za-z0-9_]+\s*,\s*[A-Za-z0-9_]+\s*\))', block)
+                                cb_call = cb_m.group(1).split('(')[0].strip() if cb_m else "onAdd"
+                                rep = f"""if ({dialog_var}) {{
         AnuEnhancedAddTaskDialog(
             onDismiss = {{ {dialog_var} = false }},
-            onAdd = {{ title, time -> viewModel.addTask(title, time) }}
+            onAdd = {{ t, tm -> {cb_call}(t, tm) }}
         )
     }}"""
-                        s = s[:if_idx] + replacement_block + s[i:]
-                        print(f"Enhanced Tasks dialog controlled by {dialog_var}")
+                                print(f"Replaced Tasks Dialog (Strategy 1, var: {dialog_var}, callback: {cb_call})")
+                                return src[:if_idx] + rep + src[i:]
+    return src
 
+s = replace_dialog_in_source(s)
+
+if "AnuEnhancedAddTaskDialog" not in s:
     dialog_composable = """
 
 @Composable
