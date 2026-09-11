@@ -21,6 +21,7 @@ object ProactiveEventEngine {
     private val lastDispatch = ConcurrentHashMap<String, AtomicLong>()
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var ambientRunning = false
+    @Volatile private var ambientTickRunnable: Runnable? = null
     @Volatile private var lastAmbientSnapshot = ""
     @Volatile private var lastAmbientSpokenAt = 0L
     @Volatile private var lastUserActivityAt = SystemClock.elapsedRealtime()
@@ -119,7 +120,14 @@ object ProactiveEventEngine {
                 handler.postDelayed(this, SCREEN_CHECK_MS)
             }
         }
+        ambientTickRunnable = tick
         handler.postDelayed(tick, 5_000L)
+    }
+
+    fun stopAmbientScreenAwareness() {
+        ambientRunning = false
+        ambientTickRunnable?.let { handler.removeCallbacks(it) }
+        ambientTickRunnable = null
     }
 
     fun noteUserActivity() {
