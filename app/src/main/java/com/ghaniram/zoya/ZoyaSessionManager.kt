@@ -431,19 +431,19 @@ object ZoyaSessionManager {
         "readScreen" -> AccessibilityControlService.instance?.uiSnapshot() ?: "Screen reading is unavailable because Anu Accessibility is not enabled."
         "getDeviceInfo" -> {
             DeviceQueryContext.set(args.optString("query").ifBlank { _state.value.chatMessages.lastOrNull { it.role == ChatRole.USER }?.text.orEmpty() })
-            DeviceInfoProvider.snapshot()
+            DeviceInfoProvider.snapshot(app)
         }
         else -> "Unknown tool: $name"
     }
 
     private fun buildToolDeclarations(): JSONArray {
         fun prop(type: String, description: String) = JSONObject().put("type", type).put("description", description)
-        val phone = JSONObject().put("name", "phoneAction").put("description", "Execute exactly one explicit phone action. Use take_selfie ONLY when the user asks to take a selfie; it performs camera operations.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("action", prop("string", "phone action keyword"))))
-        val appTool = JSONObject().put("name", "openApp").put("description", "Open an installed Android app by its visible name. Do not claim success unless the tool returns opened.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("appName", prop("string", "app name"))))
-        val web = JSONObject().put("name", "openWebsite").put("description", "Open a website in the user's browser. Only call this when the user explicitly asks to open a website or web page.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("url", prop("string", "full URL")).put("name", prop("string", "label"))))
-        val access = JSONObject().put("name", "accessibilityAction").put("description", "Perform one specific verified UI action through Anu Accessibility. For current screen understanding, call readScreen first.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("action", prop("string", "action")).put("text", prop("string", "text")).put("value", prop("string", "value"))))
+        val phone = JSONObject().put("name", "phoneAction").put("description", "Execute exactly one explicit phone action. Use take_selfie ONLY when the user asks to take a selfie; it performs camera autonomously.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("action", prop("string", "Phone action: take_selfie, camera, phone, messages, settings, wifi_settings, bluetooth_settings, flashlight_on, flashlight_off, volume_up, volume_down, brightness_up, brightness_down"))))
+        val appTool = JSONObject().put("name", "openApp").put("description", "Open an installed Android app by its visible name. Do not claim success unless the tool returns opened.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("appName", prop("string", "Exact visible app name"))))
+        val web = JSONObject().put("name", "openWebsite").put("description", "Open a website in the user's browser. Only call this when the user explicitly asks to open a website or web page.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("url", prop("string", "Full URL")).put("name", prop("string", "Website name"))))
+        val access = JSONObject().put("name", "accessibilityAction").put("description", "Perform one specific verified UI action through Anu Accessibility. For current screen understanding, call readScreen first.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("action", prop("string", "Action type: clicktext, longpress, swipe")).put("text", prop("string", "Text or label")).put("value", prop("string", "Optional value"))))
         val screen = JSONObject().put("name", "readScreen").put("description", "Read the CURRENT visible Android screen using Anu Accessibility. ALWAYS use this before deciding which UI control to interact with.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject()))
-        val device = JSONObject().put("name", "getDeviceInfo").put("description", "Read fresh LOCAL device telemetry. Treat returned values as ground truth. NEVER guess device specifications. Pass optional query string.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("query", prop("string", "query"))))
+        val device = JSONObject().put("name", "getDeviceInfo").put("description", "Read fresh LOCAL device telemetry. Treat returned values as ground truth. NEVER guess device specifications. Passing an optional query improves response relevance.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("query", prop("string", "Optional device query (e.g., battery_level)"))))
         return JSONArray().put(phone).put(appTool).put(web).put(access).put(screen).put(device)
     }
 
@@ -459,8 +459,8 @@ object ZoyaSessionManager {
         val girlfriend = settings?.girlfriendMode == true
         val userName = settings?.userName?.trim().orEmpty().ifBlank { "the user" }
         val tone = settings?.selectedVoiceTone?.trim().orEmpty().ifBlank { "natural" }
-        val vision = if (_state.value.isVisionActive) "LIVE VISION ON: current camera frames are current visual evidence." else "LIVE VISION OFF: Anu cannot currently see through the camera; previous descriptions persist."
-        val relationship = if (girlfriend) "Girlfriend Mode is ON. Speak as the user's affectionate, caring virtual girlfriend: warm, emotionally attentive, playful when appropriate, supportive, and deeply interested in their wellbeing." else "Standard Mode: professional, helpful, and conversational."
+        val vision = if (_state.value.isVisionActive) "LIVE VISION ON: current camera frames are current visual evidence." else "LIVE VISION OFF: Anu cannot currently see through the camera; previous descriptions and stored frames are historical only."
+        val relationship = if (girlfriend) "Girlfriend Mode is ON. Speak as the user's affectionate, caring virtual girlfriend: warm, emotionally attentive, playful when appropriate, supportive, and genuinely invested in their wellbeing." else ""
         return "You are Anu, a proactive personal Android assistant. Respond naturally in $language. Persona: $persona. Voice tone preference: $tone. $relationship $vision ${conversationContext()}"
     }
 
