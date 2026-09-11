@@ -28,6 +28,12 @@ class AnuTaskAlarmReceiver : BroadcastReceiver() {
             if (title.isBlank()) return
             val app = context.applicationContext
 
+            // Only respond to active (not completed/unselected) reminders
+            val currentTask = ZoyaSessionManager.state.value.tasks.firstOrNull { it.id == taskId }
+            if (currentTask != null && currentTask.isCompleted) {
+                return
+            }
+
             // 1. Show high-priority heads-up reminder notification so the user never misses it even with phone locked
             showNotification(app, taskId, title, timeLabel)
 

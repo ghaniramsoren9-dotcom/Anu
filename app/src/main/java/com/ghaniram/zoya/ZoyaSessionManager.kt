@@ -4,7 +4,6 @@ import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.ContextCompat
-import com.ghaniram.zoya.data.local.AnuDataRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -19,13 +18,15 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
+/** Manages persistent Gemini Live WebSocket session lifecycle across views. */
 object ZoyaSessionManager {
     private lateinit var app: Application
     private val _state = MutableStateFlow(ZoyaUiState())
     val state: StateFlow<ZoyaUiState> = _state
     private var client: GeminiLiveClient? = null
     private var audioEngine: AudioEngine? = null
-    private var modelSpeaking = false
+    @Volatile private var modelSpeaking = false
+    @Volatile private var proactivePlaybackOnly = false
     private var initialized = false
     private var connectionGeneration = 0L
     private var reconnectJob: Job? = null
@@ -52,9 +53,19 @@ object ZoyaSessionManager {
 
     fun connect() { ensureInitialized(); prefs.edit().putBoolean("active", true).apply(); startForegroundService(); connectInternal() }
 
+    fun connectForProactive(prompt: String) {
+        ensureInitialized()
+        val wasDisconnected = _state.value.connectionState == ConnectionState.DISCONNECTED
+        if (wasDisconnected) {
+            proactivePlaybackOnly = true
+            connectInternal()
+        }
+        sendText(prompt)
+    }
+
     fun disconnect() {
         ensureInitialized(); prefs.edit().putBoolean("active", false).apply(); reconnectJob?.cancel(); reconnectJob = null; sessionRenewalJob?.cancel(); sessionRenewalJob = null
-        connectionGeneration++; client?.disconnect(); audioEngine?.release(); client = null; audioEngine = null; modelSpeaking = false; stopForegroundService()
+        proactivePlaybackOnly = false; connectionGeneration++; client?.disconnect(); audioEngine?.release(); client = null; audioEngine = null; modelSpeaking = false; stopForegroundService()
         _state.update { it.copy(connectionState = ConnectionState.DISCONNECTED, inputLevel = 0f, outputLevel = 0f, isAnuResponding = false) }
     }
 
@@ -93,9 +104,7 @@ object ZoyaSessionManager {
     fun addTask(title: String, time: String) { val task = AnuTask(UUID.randomUUID().toString(), title, time, false); _state.update { it.copy(tasks = it.tasks + task) }; AnuTaskAlarmScheduler.schedule(app, task) }
     fun toggleTask(id: String) { val task = _state.value.tasks.firstOrNull { it.id == id } ?: return; val updated = task.copy(isCompleted = !task.isCompleted); _state.update { s -> s.copy(tasks = s.tasks.map { if (it.id == id) updated else it }) }; if (updated.isCompleted) AnuTaskAlarmScheduler.cancel(app, id) else AnuTaskAlarmScheduler.schedule(app, updated) }
     fun deleteTask(id: String) { AnuTaskAlarmScheduler.cancel(app, id); _state.update { s -> s.copy(tasks = s.tasks.filterNot { it.id == id }) } }
-    fun clearMemories() { scope.launch { repository.clearMemories() } }
-    fun clearChatHistory() { scope.launch { repository.clearChatMessages() } }
-    fun dismissError() { _state.update { it.copy(error = null) } }
+
     fun onApiKeyUpdated(newKey: String) { if (newKey.isNotBlank()) _state.update { it.copy(error = null) } }
     fun onSettingsUpdated() { if (isConnected()) reconnect() }
     fun reconnectForCriticalSettings() { if (isConnected()) reconnect() }
@@ -135,12 +144,19 @@ object ZoyaSessionManager {
         client = GeminiLiveClient(apiKey = apiKey, voiceName = voice, callbacks = object : GeminiLiveClient.Callbacks {
             private var currentUserId: String? = null
             private var currentAnuId: String? = null
-            private fun isCurrentSession() = connectionGeneration == generation && client != null && prefs.getBoolean("active", false)
+            private fun isCurrentSession() = connectionGeneration == generation && client != null && (prefs.getBoolean("active", false) || proactivePlaybackOnly)
 
             override fun onConnected() {
                 if (!isCurrentSession()) return
-                audioEngine?.startPlayback(); audioEngine?.startRecording(); modelSpeaking = false
-                _state.update { it.copy(connectionState = ConnectionState.LISTENING, error = null, inputLevel = 0f, outputLevel = 0f, isAnuResponding = false) }
+                audioEngine?.startPlayback()
+                modelSpeaking = false
+                if (prefs.getBoolean("active", false) && !proactivePlaybackOnly) {
+                    audioEngine?.startRecording()
+                    _state.update { it.copy(connectionState = ConnectionState.LISTENING, error = null, inputLevel = 0f, outputLevel = 0f, isAnuResponding = false) }
+                } else {
+                    // Do NOT open or start microphone recording! Mic stays completely OFF.
+                    _state.update { it.copy(connectionState = ConnectionState.SPEAKING, error = null, inputLevel = 0f, outputLevel = 0f, isAnuResponding = false) }
+                }
                 // Renew before the provider's long-session boundary instead of waiting for a stall.
                 sessionRenewalJob?.cancel()
                 sessionRenewalJob = scope.launch {
@@ -204,7 +220,11 @@ object ZoyaSessionManager {
                 if (!isCurrentSession()) return
                 currentUserId = null; currentAnuId = null; _state.update { it.copy(isAnuResponding = false) }
                 audioEngine?.whenPlaybackDrained {
-                    if (isCurrentSession()) {
+                    if (proactivePlaybackOnly) {
+                        // Finished speaking proactive alert while mic was off: shut down session immediately!
+                        proactivePlaybackOnly = false
+                        disconnect()
+                    } else if (isCurrentSession()) {
                         modelSpeaking = false; audioEngine?.startRecording(); _state.update { it.copy(connectionState = ConnectionState.LISTENING, inputLevel = 0f, outputLevel = 0f) }
                     }
                 }
@@ -212,7 +232,7 @@ object ZoyaSessionManager {
 
             override fun onToolCall(name: String, args: JSONObject, id: String) {
                 if (!isCurrentSession()) return
-                val result = runCatching { executeTool(name, args) }.getOrElse { "Tool $name failed safely: ${it.message ?: "unknown error"}" }
+                val result = runCatching { executeTool(name, args) }.getOrElse { "Tool $name failed safely: ${it.message ?: \"unknown error\"}" }
                 client?.sendToolResponse(name, id, result)
             }
         })
@@ -238,7 +258,7 @@ object ZoyaSessionManager {
     }
 
     private fun executeTool(name: String, args: JSONObject): String = when (name) {
-        "openWebsite" -> { val url = args.optString("url").trim(); val label = args.optString("name", url); if (url.isBlank()) "invalid URL" else runCatching { app.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }); "opened $label" }.getOrElse { "could not open $label: ${it.message ?: "unknown error"}" } }
+        "openWebsite" -> { val url = args.optString("url").trim(); val label = args.optString("name", url); if (url.isBlank()) "invalid URL" else runCatching { app.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }); "opened $label" }.getOrElse { "could not open $label: ${it.message ?: \"unknown error\"}" } }
         "openApp" -> phoneControls.openApp(args.optString("appName"))
         "phoneAction" -> when (args.optString("action").trim().lowercase()) {
             "take_selfie", "selfie", "camera_selfie" -> takeSelfieAutonomous()

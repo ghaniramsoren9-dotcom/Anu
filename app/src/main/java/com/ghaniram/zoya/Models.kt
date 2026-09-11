@@ -29,11 +29,7 @@ data class ZoyaUiState(
     val memories: List<String> = emptyList(),
     val chatMessages: List<ChatMessage> = emptyList(),
     val quote: String = "",
-    val tasks: List<AnuTask> = listOf(
-        AnuTask("1", "Study", "7:00 PM"),
-        AnuTask("2", "Call", "8:30 PM"),
-        AnuTask("3", "Reminder", "9:00 PM")
-    ),
+    val tasks: List<AnuTask> = emptyList(),
     val visionDescription: String = "",
     val isVisionActive: Boolean = false,
     val isAnuResponding: Boolean = false
