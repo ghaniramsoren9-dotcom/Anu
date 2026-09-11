@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.ContextCompat
+import com.ghaniram.zoya.data.local.AnuDataRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -31,7 +32,7 @@ object ZoyaSessionManager {
     private var connectionGeneration = 0L
     private var reconnectJob: Job? = null
     private var sessionRenewalJob: Job? = null
-    private val repository by lazy { AnuDataRepository.getInstance(app) }
+    private val repository: AnuDataRepository by lazy { AnuDataRepository.getInstance(app) }
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val phoneControls by lazy { PhoneControlManager(app) }
     private val prefs by lazy { app.getSharedPreferences("anu_session", 0) }
@@ -123,7 +124,7 @@ object ZoyaSessionManager {
             visionDescription = if (active) it.visionDescription else if (it.visionDescription.isBlank()) "Live Vision is OFF. The last camera observation is unavailable." else it.visionDescription
         ) }
         if (isConnected()) {
-            client?.sendText(if (active) "[VISION STATE] Live Vision is ON. Current camera frames may be used as current visual evidence." else "[VISION STATE] Live Vision is OFF. You cannot see through the camera.")
+            client?.sendText(if (active) "[VISION STATE] Live Vision is ON. Current camera frames may be used as current visual evidence." else "[VISION STATE] Live Vision is OFF. You cannot see the camera.")
         }
     }
 
@@ -186,6 +187,23 @@ object ZoyaSessionManager {
 
     fun reconnectForCriticalSettings() {
         if (isConnected()) reconnect()
+    }
+
+    fun clearMemories() {
+        ensureInitialized()
+        scope.launch { repository.clearMemories() }
+        _state.update { it.copy(memories = emptyList()) }
+    }
+
+    fun clearChatHistory() {
+        ensureInitialized()
+        scope.launch { repository.clearChatMessages() }
+        _state.update { it.copy(chatMessages = emptyList()) }
+    }
+
+    fun dismissError() {
+        ensureInitialized()
+        _state.update { it.copy(error = null) }
     }
 
     /** Load persisted history synchronously at connection setup so the first session after app launch cannot race the Flow collectors. */
@@ -420,12 +438,12 @@ object ZoyaSessionManager {
 
     private fun buildToolDeclarations(): JSONArray {
         fun prop(type: String, description: String) = JSONObject().put("type", type).put("description", description)
-        val phone = JSONObject().put("name", "phoneAction").put("description", "Execute exactly one explicit phone action. Use take_selfie ONLY when the user asks to take a selfie; it performs camera operations.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("action", prop("string", "The phone action to perform"))))
-        val appTool = JSONObject().put("name", "openApp").put("description", "Open an installed Android app by its visible name. Do not claim success unless the tool returns opened.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("appName", prop("string", "The name of the app to open"))))
-        val web = JSONObject().put("name", "openWebsite").put("description", "Open a website in the user's browser. Only call this when the user explicitly asks to open a website or web page.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("url", prop("string", "The URL to open")).put("name", prop("string", "The name of the website"))))
-        val access = JSONObject().put("name", "accessibilityAction").put("description", "Perform one specific verified UI action through Anu Accessibility. For current screen understanding, call readScreen first.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("action", prop("string", "The accessibility action type")).put("text", prop("string", "Text to search for")).put("value", prop("string", "Value to set"))))
+        val phone = JSONObject().put("name", "phoneAction").put("description", "Execute exactly one explicit phone action. Use take_selfie ONLY when the user asks to take a selfie; it performs camera operations.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("action", prop("string", "phone action keyword"))))
+        val appTool = JSONObject().put("name", "openApp").put("description", "Open an installed Android app by its visible name. Do not claim success unless the tool returns opened.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("appName", prop("string", "app name"))))
+        val web = JSONObject().put("name", "openWebsite").put("description", "Open a website in the user's browser. Only call this when the user explicitly asks to open a website or web page.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("url", prop("string", "full URL")).put("name", prop("string", "label"))))
+        val access = JSONObject().put("name", "accessibilityAction").put("description", "Perform one specific verified UI action through Anu Accessibility. For current screen understanding, call readScreen first.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("action", prop("string", "action")).put("text", prop("string", "text")).put("value", prop("string", "value"))))
         val screen = JSONObject().put("name", "readScreen").put("description", "Read the CURRENT visible Android screen using Anu Accessibility. ALWAYS use this before deciding which UI control to interact with.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject()))
-        val device = JSONObject().put("name", "getDeviceInfo").put("description", "Read fresh LOCAL device telemetry. Treat returned values as ground truth. NEVER guess device specifications. Pass a query string or leave empty to use the last user message.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("query", prop("string", "Device info query"))))
+        val device = JSONObject().put("name", "getDeviceInfo").put("description", "Read fresh LOCAL device telemetry. Treat returned values as ground truth. NEVER guess device specifications. Pass optional query string.").put("parameters", JSONObject().put("type", "object").put("properties", JSONObject().put("query", prop("string", "query"))))
         return JSONArray().put(phone).put(appTool).put(web).put(access).put(screen).put(device)
     }
 
@@ -441,8 +459,8 @@ object ZoyaSessionManager {
         val girlfriend = settings?.girlfriendMode == true
         val userName = settings?.userName?.trim().orEmpty().ifBlank { "the user" }
         val tone = settings?.selectedVoiceTone?.trim().orEmpty().ifBlank { "natural" }
-        val vision = if (_state.value.isVisionActive) "LIVE VISION ON: current camera frames are current visual evidence." else "LIVE VISION OFF: Anu cannot currently see through the camera; previous visual context is unavailable."
-        val relationship = if (girlfriend) "Girlfriend Mode is ON. Speak as the user's affectionate, caring virtual girlfriend: warm, emotionally attentive, playful when appropriate, supportive, and genuinely interested in their well-being." else "Standard Assistant Mode."
+        val vision = if (_state.value.isVisionActive) "LIVE VISION ON: current camera frames are current visual evidence." else "LIVE VISION OFF: Anu cannot currently see through the camera; previous descriptions persist."
+        val relationship = if (girlfriend) "Girlfriend Mode is ON. Speak as the user's affectionate, caring virtual girlfriend: warm, emotionally attentive, playful when appropriate, supportive, and deeply interested in their wellbeing." else "Standard Mode: professional, helpful, and conversational."
         return "You are Anu, a proactive personal Android assistant. Respond naturally in $language. Persona: $persona. Voice tone preference: $tone. $relationship $vision ${conversationContext()}"
     }
 
