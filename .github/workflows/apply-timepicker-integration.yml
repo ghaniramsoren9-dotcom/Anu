@@ -22,7 +22,6 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import re
 
           path = Path("app/src/main/java/com/ghaniram/zoya/MainActivity.kt")
           text = path.read_text(encoding="utf-8")
@@ -34,85 +33,90 @@ jobs:
                   raise SystemExit("Could not find theme import marker")
               text = text.replace(marker, marker + import_line, 1)
 
-          pattern = re.compile(
-              r'(?m)^(?P<i>\s*)OutlinedTextField\(\n'
-              r'(?P=i)    value = newTaskTime,\n'
-              r'(?P=i)    onValueChange = \{ newTaskTime = it \},\n'
-              r'(?P=i)    label = \{ Text\("Time \(e\.g\. 7:00 PM\)"\) \},\n'
-              r'(?P=i)    singleLine = true,\n'
-              r'(?P=i)    modifier = Modifier\.fillMaxWidth\(\)\n'
-              r'(?P=i)\)'
-          )
+          lines = text.splitlines()
+          target = next((i for i, line in enumerate(lines) if "value = newTaskTime," in line), None)
+          if target is None:
+              if "TimePickerWithPresetsDialog(" in text:
+                  print("TimePicker integration already present; no replacement needed.")
+                  raise SystemExit(0)
+              raise SystemExit("Could not find newTaskTime field")
 
-          new_block = '''{i}var showTimePickerDialog by remember {{ mutableStateOf(false) }}
+          start = target
+          while start >= 0 and "OutlinedTextField(" not in lines[start]:
+              start -= 1
+          if start < 0:
+              raise SystemExit("Could not find start of newTaskTime field")
 
-{i}OutlinedTextField(
-{i}    value = newTaskTime,
-{i}    onValueChange = {{ newTaskTime = it }},
-{i}    label = {{ Text("Time (e.g. 7:00 PM)") }},
-{i}    singleLine = true,
-{i}    trailingIcon = {{
-{i}        IconButton(onClick = {{ showTimePickerDialog = true }}) {{
-{i}            Icon(
-{i}                Icons.Filled.Schedule,
-{i}                contentDescription = "Pick Time",
-{i}                tint = MaterialTheme.colorScheme.primary
-{i}            )
-{i}        }}
-{i}    }},
-{i}    modifier = Modifier.fillMaxWidth()
-{i})
-{i}Spacer(modifier = Modifier.height(6.dp))
-{i}Text(
-{i}    text = "Quick Presets:",
-{i}    fontSize = 11.sp,
-{i}    color = MaterialTheme.colorScheme.onSurfaceVariant
-{i})
-{i}Spacer(modifier = Modifier.height(4.dp))
-{i}Row(
-{i}    modifier = Modifier.fillMaxWidth(),
-{i}    horizontalArrangement = Arrangement.spacedBy(6.dp)
-{i}) {{
-{i}    listOf(15 to "+15m", 30 to "+30m", 60 to "+1h").forEach {{ (min, label) ->
-{i}        AssistChip(
-{i}            onClick = {{
-{i}                val cal = Calendar.getInstance().apply {{ add(Calendar.MINUTE, min) }}
-{i}                val ampm = if (cal.get(Calendar.AM_PM) == Calendar.AM) "AM" else "PM"
-{i}                val h = if (cal.get(Calendar.HOUR) == 0) 12 else cal.get(Calendar.HOUR)
-{i}                newTaskTime = String.format(Locale.US, "%d:%02d %s", h, cal.get(Calendar.MINUTE), ampm)
-{i}            }},
-{i}            label = {{ Text(label, fontSize = 11.sp) }}
-{i}        )
-{i}    }}
-{i}    AssistChip(
-{i}        onClick = {{ showTimePickerDialog = true }},
-{i}        label = {{ Text("🕒 Clock", fontSize = 11.sp) }}
-{i}    )
-{i}}}
-{i}if (showTimePickerDialog) {{
-{i}    TimePickerWithPresetsDialog(
-{i}        onConfirm = {{ hour, minute ->
-{i}            val ampm = if (hour >= 12) "PM" else "AM"
-{i}            val h12 = if (hour % 12 == 0) 12 else hour % 12
-{i}            newTaskTime = String.format(Locale.US, "%d:%02d %s", h12, minute, ampm)
-{i}            showTimePickerDialog = false
-{i}        }},
-{i}        onDismiss = {{
-{i}            showTimePickerDialog = false
-{i}        }}
-{i}    )
-{i}}}'''
-
-          match = pattern.search(text)
-          if match:
-              replacement = new_block.format(i=match.group("i"))
-              text = text[:match.start()] + replacement + text[match.end():]
-          elif "TimePickerWithPresetsDialog(" in text:
-              print("TimePicker integration already present; no replacement needed.")
+          end = target
+          while end + 1 < len(lines):
+              end += 1
+              if lines[end].strip() == ")":
+                  break
           else:
-              raise SystemExit("Could not find the existing newTaskTime OutlinedTextField block")
+              raise SystemExit("Could not find end of newTaskTime field")
 
-          path.write_text(text, encoding="utf-8")
+          indent = lines[start][:len(lines[start]) - len(lines[start].lstrip())]
+          block = f'''{indent}var showTimePickerDialog by remember {{ mutableStateOf(false) }}
+
+{indent}OutlinedTextField(
+{indent}    value = newTaskTime,
+{indent}    onValueChange = {{ newTaskTime = it }},
+{indent}    label = {{ Text("Time (e.g. 7:00 PM)") }},
+{indent}    singleLine = true,
+{indent}    trailingIcon = {{
+{indent}        IconButton(onClick = {{ showTimePickerDialog = true }}) {{
+{indent}            Icon(
+{indent}                Icons.Filled.Schedule,
+{indent}                contentDescription = "Pick Time",
+{indent}                tint = MaterialTheme.colorScheme.primary
+{indent}            )
+{indent}        }}
+{indent}    }},
+{indent}    modifier = Modifier.fillMaxWidth()
+{indent})
+{indent}Spacer(modifier = Modifier.height(6.dp))
+{indent}Text(
+{indent}    text = "Quick Presets:",
+{indent}    fontSize = 11.sp,
+{indent}    color = MaterialTheme.colorScheme.onSurfaceVariant
+{indent})
+{indent}Spacer(modifier = Modifier.height(4.dp))
+{indent}Row(
+{indent}    modifier = Modifier.fillMaxWidth(),
+{indent}    horizontalArrangement = Arrangement.spacedBy(6.dp)
+{indent}) {{
+{indent}    listOf(15 to "+15m", 30 to "+30m", 60 to "+1h").forEach {{ (min, label) ->
+{indent}        AssistChip(
+{indent}            onClick = {{
+{indent}                val cal = Calendar.getInstance().apply {{ add(Calendar.MINUTE, min) }}
+{indent}                val ampm = if (cal.get(Calendar.AM_PM) == Calendar.AM) "AM" else "PM"
+{indent}                val h = if (cal.get(Calendar.HOUR) == 0) 12 else cal.get(Calendar.HOUR)
+{indent}                newTaskTime = String.format(Locale.US, "%d:%02d %s", h, cal.get(Calendar.MINUTE), ampm)
+{indent}            }},
+{indent}            label = {{ Text(label, fontSize = 11.sp) }}
+{indent}        )
+{indent}    }}
+{indent}    AssistChip(
+{indent}        onClick = {{ showTimePickerDialog = true }},
+{indent}        label = {{ Text("🕒 Clock", fontSize = 11.sp) }}
+{indent}    )
+{indent}}}
+{indent}if (showTimePickerDialog) {{
+{indent}    TimePickerWithPresetsDialog(
+{indent}        onConfirm = {{ hour, minute ->
+{indent}            val ampm = if (hour >= 12) "PM" else "AM"
+{indent}            val h12 = if (hour % 12 == 0) 12 else hour % 12
+{indent}            newTaskTime = String.format(Locale.US, "%d:%02d %s", h12, minute, ampm)
+{indent}            showTimePickerDialog = false
+{indent}        }},
+{indent}        onDismiss = {{
+{indent}            showTimePickerDialog = false
+{indent}        }}
+{indent}    )
+{indent}}}'''
+
+          lines[start:end + 1] = block.splitlines()
+          path.write_text("\n".join(lines) + "\n", encoding="utf-8")
           PY
 
       - name: Verify integration
