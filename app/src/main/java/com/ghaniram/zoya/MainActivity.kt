@@ -80,6 +80,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import com.ghaniram.zoya.ui.theme.*
+import com.ghaniram.zoya.ui.TimePickerWithPresetsDialog
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.abs
@@ -2819,13 +2820,62 @@ fun AnuTasksScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    var showTimePickerDialog by remember { mutableStateOf(false) }
+
                     OutlinedTextField(
                         value = newTaskTime,
                         onValueChange = { newTaskTime = it },
                         label = { Text("Time (e.g. 7:00 PM)") },
                         singleLine = true,
+                        trailingIcon = {
+                            IconButton(onClick = { showTimePickerDialog = true }) {
+                                Icon(
+                                    Icons.Filled.Schedule,
+                                    contentDescription = "Pick Time",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        },
                         modifier = Modifier.fillMaxWidth()
                     )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Quick Presets:",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(15 to "+15m", 30 to "+30m", 60 to "+1h").forEach { (min, label) ->
+                            AssistChip(
+                                onClick = {
+                                    val cal = Calendar.getInstance().apply { add(Calendar.MINUTE, min) }
+                                    val ampm = if (cal.get(Calendar.AM_PM) == Calendar.AM) "AM" else "PM"
+                                    val h = if (cal.get(Calendar.HOUR) == 0) 12 else cal.get(Calendar.HOUR)
+                                    newTaskTime = String.format(Locale.US, "%d:%02d %s", h, cal.get(Calendar.MINUTE), ampm)
+                                },
+                                label = { Text(label, fontSize = 11.sp) }
+                            )
+                        }
+                        AssistChip(
+                            onClick = { showTimePickerDialog = true },
+                            label = { Text("🕒 Clock", fontSize = 11.sp) }
+                        )
+                    }
+                    if (showTimePickerDialog) {
+                        TimePickerWithPresetsDialog(
+                            onConfirm = { hour, minute ->
+                                val ampm = if (hour >= 12) "PM" else "AM"
+                                val h12 = if (hour % 12 == 0) 12 else hour % 12
+                                newTaskTime = String.format(Locale.US, "%d:%02d %s", h12, minute, ampm)
+                                showTimePickerDialog = false
+                            },
+                            onDismiss = { showTimePickerDialog = false }
+                        )
+                    }
                 }
             },
             confirmButton = {
