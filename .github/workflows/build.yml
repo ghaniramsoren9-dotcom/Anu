@@ -108,7 +108,7 @@ jobs:
           "$APKSIGNER" verify --verbose "$APK"
           ls -lh "$APK"
 
-      - name: Create GitHub Release and upload APK
+      - name: Create or update GitHub Release and upload APK
         if: ${{ success() }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -117,6 +117,20 @@ jobs:
           set -euo pipefail
           APK="app/build/outputs/apk/debug/app-debug.apk"
           TAG="anu-build-${{ github.run_number }}"
-          gh release create "$TAG" "$APK#Anu-debug.apk" --repo "${{ github.repository }}" --title "Anu APK build ${{ github.run_number }}" --notes "Automated Anu debug APK build from commit ${{ github.sha }}." --target "${{ github.sha }}"
+          REPO="${{ github.repository }}"
+
+          # A workflow re-run keeps the same run number, so the tag/release may already exist.
+          # Reuse it instead of failing the whole workflow on a duplicate-release error.
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; updating its APK asset."
+            gh release upload "$TAG" "$APK#Anu-debug.apk" --repo "$REPO" --clobber
+          else
+            echo "Creating release $TAG and uploading APK."
+            gh release create "$TAG" "$APK#Anu-debug.apk" \
+              --repo "$REPO" \
+              --title "Anu APK build ${{ github.run_number }}" \
+              --notes "Automated Anu debug APK build from commit ${{ github.sha }}." \
+              --target "${{ github.sha }}"
+          fi
 
 # Build trigger: include the latest event, task-alarm, chat-silent proactive and concise-device fixes.
