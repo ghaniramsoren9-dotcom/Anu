@@ -75,127 +75,6 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Apply requested Anu TimePicker integration
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path("app/src/main/java/com/ghaniram/zoya/MainActivity.kt")
-          text = path.read_text(encoding="utf-8")
-
-          import_line = "import com.ghaniram.zoya.ui.TimePickerWithPresetsDialog\n"
-          if import_line not in text:
-              marker = "import com.ghaniram.zoya.ui.theme.*\n"
-              if marker not in text:
-                  raise SystemExit("Could not find theme import marker")
-              text = text.replace(marker, marker + import_line, 1)
-
-          if "TimePickerWithPresetsDialog(" not in text:
-              lines = text.splitlines()
-              target = next((i for i, line in enumerate(lines) if "value = newTaskTime," in line), None)
-              if target is None:
-                  raise SystemExit("Could not find newTaskTime field")
-
-              start = target
-              while start >= 0 and "OutlinedTextField(" not in lines[start]:
-                  start -= 1
-              if start < 0:
-                  raise SystemExit("Could not find start of newTaskTime field")
-
-              end = target
-              while end + 1 < len(lines):
-                  end += 1
-                  if lines[end].strip() == ")":
-                      break
-              else:
-                  raise SystemExit("Could not find end of newTaskTime field")
-
-              indent = lines[start][:len(lines[start]) - len(lines[start].lstrip())]
-              block = f'''{indent}var showTimePickerDialog by remember {{ mutableStateOf(false) }}
-
-{indent}OutlinedTextField(
-{indent}    value = newTaskTime,
-{indent}    onValueChange = {{ newTaskTime = it }},
-{indent}    label = {{ Text("Time (e.g. 7:00 PM)") }},
-{indent}    singleLine = true,
-{indent}    trailingIcon = {{
-{indent}        IconButton(onClick = {{ showTimePickerDialog = true }}) {{
-{indent}            Icon(
-{indent}                Icons.Filled.Schedule,
-{indent}                contentDescription = "Pick Time",
-{indent}                tint = MaterialTheme.colorScheme.primary
-{indent}            )
-{indent}        }}
-{indent}    }},
-{indent}    modifier = Modifier.fillMaxWidth()
-{indent}})
-{indent}Spacer(modifier = Modifier.height(6.dp))
-{indent}Text(
-{indent}    text = "Quick Presets:",
-{indent}    fontSize = 11.sp,
-{indent}    color = MaterialTheme.colorScheme.onSurfaceVariant
-{indent})
-{indent}Spacer(modifier = Modifier.height(4.dp))
-{indent}Row(
-{indent}    modifier = Modifier.fillMaxWidth(),
-{indent}    horizontalArrangement = Arrangement.spacedBy(6.dp)
-{indent}) {{
-{indent}    listOf(15 to "+15m", 30 to "+30m", 60 to "+1h").forEach {{ (min, label) ->
-{indent}        AssistChip(
-{indent}            onClick = {{
-{indent}                val cal = Calendar.getInstance().apply {{ add(Calendar.MINUTE, min) }}
-{indent}                val ampm = if (cal.get(Calendar.AM_PM) == Calendar.AM) "AM" else "PM"
-{indent}                val h = if (cal.get(Calendar.HOUR) == 0) 12 else cal.get(Calendar.HOUR)
-{indent}                newTaskTime = String.format(Locale.US, "%d:%02d %s", h, cal.get(Calendar.MINUTE), ampm)
-{indent}            }},
-{indent}            label = {{ Text(label, fontSize = 11.sp) }}
-{indent}        )
-{indent}    }}
-{indent}    AssistChip(
-{indent}        onClick = {{ showTimePickerDialog = true }},
-{indent}        label = {{ Text("🕒 Clock", fontSize = 11.sp) }}
-{indent}    )
-{indent}}}
-{indent}if (showTimePickerDialog) {{
-{indent}    TimePickerWithPresetsDialog(
-{indent}        onConfirm = {{ hour, minute ->
-{indent}            val ampm = if (hour >= 12) "PM" else "AM"
-{indent}            val h12 = if (hour % 12 == 0) 12 else hour % 12
-{indent}            newTaskTime = String.format(Locale.US, "%d:%02d %s", h12, minute, ampm)
-{indent}            showTimePickerDialog = false
-{indent}        }},
-{indent}        onDismiss = {{
-{indent}            showTimePickerDialog = false
-{indent}        }}
-{indent}    )
-{indent}}}'''
-
-              lines[start:end + 1] = block.splitlines()
-              text = "\n".join(lines) + "\n"
-              path.write_text(text, encoding="utf-8")
-          PY
-
-          grep -q 'TimePickerWithPresetsDialog' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
-          grep -q 'Quick Presets:' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
-          grep -q 'Icons.Filled.Schedule' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
-          echo "Anu TimePicker integration applied and verified."
-
-      - name: Commit TimePicker source change
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/src/main/java/com/ghaniram/zoya/MainActivity.kt
-          if git diff --cached --quiet; then
-            echo "No TimePicker source changes to commit."
-          else
-            git commit -m "feat: add task time picker quick presets"
-            git push
-          fi
-
       - name: Check source tree
         shell: bash
         run: |
@@ -203,7 +82,7 @@ jobs:
           test -s app/src/main/java/com/ghaniram/zoya/MainActivity.kt
           test -s app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
           test -s app/src/main/java/com/ghaniram/zoya/AnuSettingsStore.kt
-          echo "Committed Kotlin source verified."
+          echo "Committed Kotlin source verified; no generated source mutation will run in CI."
 
       - name: Build debug APK
         shell: bash
@@ -213,6 +92,9 @@ jobs:
           set -euo pipefail
           STORE_PASSWORD="$(printf '%s' "$ANU_KEYSTORE_PASSWORD" | tr -d '\r\n')"
           test -n "$STORE_PASSWORD"
+          # Kotlin 2.0.20's compiler daemon is terminating unexpectedly on the GitHub runner.
+          # Run Kotlin compilation in the Gradle process so the build does not depend on the
+          # separate KotlinCompileDaemon startup/connection.
           ./gradlew --no-daemon --stacktrace --info -Pkotlin.compiler.execution.strategy=in-process clean assembleDebug 2>&1 | tee gradle-build.log
 
       - name: Verify debug APK
@@ -237,4 +119,4 @@ jobs:
           TAG="anu-build-${{ github.run_number }}"
           gh release create "$TAG" "$APK#Anu-debug.apk" --repo "${{ github.repository }}" --title "Anu APK build ${{ github.run_number }}" --notes "Automated Anu debug APK build from commit ${{ github.sha }}." --target "${{ github.sha }}"
 
-# Build trigger: TimePicker integration is applied before compilation.
+# Build trigger: include the latest event, task-alarm, chat-silent proactive and concise-device fixes.
