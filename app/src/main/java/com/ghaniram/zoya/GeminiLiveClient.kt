@@ -121,7 +121,7 @@ class GeminiLiveClient(
             terminalErrorSent = false
             callbacks.onConnected()
             flushPendingMessages()
-            startScreenVision()
+            if (isScreenVisionEnabled()) startScreenVision() else stopScreenVision()
             return
         }
         json.optJSONObject("error")?.let { error ->
@@ -214,16 +214,20 @@ class GeminiLiveClient(
         enqueueOrSend(JSONObject().put("toolResponse", toolResponse).toString())
     }
 
-    /** Start low-rate pixel sampling from the user's enabled AccessibilityService. */
+    /**
+     * Sends changed screen pixels only when the explicit Screen Vision toggle is ON.
+     * Sampling is intentionally low-rate to reduce mobile-data use and Live API latency.
+     */
     private fun startScreenVision() {
         stopScreenVision()
+        if (!isScreenVisionEnabled()) return
         screenVisionExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
             Thread(runnable, "Anu-ScreenVision").apply { isDaemon = true }
         }.also { executor ->
             executor.scheduleWithFixedDelay({
-                if (!setupComplete) return@scheduleWithFixedDelay
+                if (!setupComplete || !isScreenVisionEnabled()) return@scheduleWithFixedDelay
                 AccessibilityControlService.instance?.captureScreenJpeg { bytes ->
-                    if (bytes.isNotEmpty() && setupComplete) {
+                    if (bytes.isNotEmpty() && setupComplete && isScreenVisionEnabled()) {
                         val hash = sha256(bytes)
                         if (hash == lastScreenFrameHash) return@captureScreenJpeg
                         lastScreenFrameHash = hash
@@ -231,9 +235,15 @@ class GeminiLiveClient(
                         sendVideoFrame(base64)
                     }
                 }
-            }, 500L, 2200L, TimeUnit.MILLISECONDS)
+            }, 1000L, 3500L, TimeUnit.MILLISECONDS)
         }
     }
+
+    private fun isScreenVisionEnabled(): Boolean = runCatching {
+        AccessibilityControlService.instance?.let { service ->
+            AnuSettingsStore.getInstance(service.applicationContext).screenRecordingMode
+        } ?: false
+    }.getOrDefault(false)
 
     private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
         .digest(bytes)
