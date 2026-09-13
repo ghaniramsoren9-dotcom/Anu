@@ -148,7 +148,9 @@ jobs:
           grep -q 'AnuConversationSummary' app/src/main/java/com/ghaniram/zoya/Models.kt
           grep -q 'fun newConversation()' app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
           grep -q 'onNewConversation' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
-          grep -q 'Saved conversations' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
+          # The premium history script intentionally uses the English title "Chat History".
+          grep -q 'Chat History' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
+          grep -q 'Search conversations' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
           echo "Conversation history source integration verified."
 
       - name: Build debug APK
