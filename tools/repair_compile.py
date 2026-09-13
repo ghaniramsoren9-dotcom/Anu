@@ -25,7 +25,6 @@ s = session.read_text(encoding="utf-8")
 s = remove_duplicate_function(s, "private fun buildSystemInstruction(): String {", "private fun property")
 s = remove_duplicate_function(s, "private fun buildToolDeclarations(): JSONArray = JSONArray().apply {", "private fun ensureInitialized")
 
-# Guard against a previous patch stage deleting the helper while leaving its call site.
 if "buildToolDeclarations()" in s and "private fun buildToolDeclarations(): JSONArray" not in s:
     marker = "    private fun ensureInitialized"
     if marker not in s:
@@ -67,9 +66,8 @@ for file_name in ("ZoyaViewModel.kt", "ZoyaSessionManager.kt", "MainActivity.kt"
 
 session.write_text(s, encoding="utf-8")
 
-# The premium history renderer needs the conversation-aware callback arguments
-# added by apply_conversation_history.py. Keep this repair idempotent because
-# the build workflow regenerates the history UI on every run.
+# The premium history renderer is regenerated during the build. Normalize its
+# caller after every generator so stale conversation parameters cannot survive.
 main = ROOT / "MainActivity.kt"
 m = main.read_text(encoding="utf-8")
 old_call = '''        AnuChatHistoryDialog(
@@ -94,6 +92,10 @@ new_call = '''        AnuChatHistoryDialog(
 if old_call in m:
     m = m.replace(old_call, new_call, 1)
 
+# Older conversation-history generator versions included this parameter, but
+# the premium renderer intentionally does not. Remove it from the call only.
+m = re.sub(r"^[ \t]*activeConversationId\s*=\s*[^,\n]+,\s*\n", "", m, count=1, flags=re.MULTILINE)
+
 # Avoid overload-resolution collisions in this generated dialog by explicitly
 # selecting Material 3 Surface. This also keeps the code robust if another
 # Compose Surface symbol is introduced later.
@@ -106,4 +108,4 @@ if "fun AnuChatHistoryDialog" in m:
     m = m[:start] + history + m[end:]
 
 main.write_text(m, encoding="utf-8")
-print("Repaired generated Kotlin, wired conversation callbacks, and qualified Material 3 Surface in Chat History.")
+print("Repaired generated Kotlin, normalized conversation callbacks, removed stale activeConversationId, and qualified Material 3 Surface in Chat History.")
