@@ -61,6 +61,12 @@ jobs:
           set -euo pipefail
           python3 tools/apply_conversation_history.py
 
+      - name: Repair generated Kotlin before compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/repair_compile.py
+
       - name: Verify modified source tree
         shell: bash
         run: |
