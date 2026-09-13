@@ -21,20 +21,23 @@ session = PKG / "ZoyaSessionManager.kt"
 if session.exists():
     s = session.read_text(encoding="utf-8")
 
-    # Add a stable source marker so the build can verify that this patch stage ran.
+    # Keep a stable source marker immediately before the system-instruction builder.
+    marker = "    // MULTILINGUAL TOOL RULE: Gemini must understand device commands in any language.\n"
     if "MULTILINGUAL TOOL RULE:" not in s:
-        marker = "    // MULTILINGUAL TOOL RULE: Gemini must understand device commands in any language.\n"
-        anchor = "    private fun buildSystemInstruction(): String {"
+        anchor = "    private fun buildSystemInstruction()"
         if anchor in s:
             s = s.replace(anchor, marker + anchor, 1)
 
-    # Strengthen the openApp tool description when the existing declaration is present.
+    # Strengthen the openApp tool declaration so Gemini can translate/interpret
+    # an app request before producing the canonical tool argument.
     old = 'Actually launch an installed Android app by its visible name.'
     new = ('Actually launch an installed Android app by its visible name. '
            'The user may request the app in ANY language; interpret/translate the request and '
            'pass the canonical app name (prefer English names such as YouTube, WhatsApp, Chrome, '
            'Instagram, Settings, Camera). Never require an English voice command.')
-    s = s.replace(old, new)
+    if old in s and new not in s:
+        s = s.replace(old, new, 1)
+
     session.write_text(s, encoding="utf-8")
 
 phone = PKG / "PhoneControlManager.kt"
@@ -47,7 +50,7 @@ if phone.exists():
     new_action = 'private fun normalizeAction(value: String): String = value.lowercase().filter { it.isLetterOrDigit() }'
     s = s.replace(old_action, new_action)
     if 'filter { it.isLetterOrDigit() }' not in s:
-        s = s.replace('class PhoneControlManager', '// Unicode-aware multilingual app/action matching: filter { it.isLetterOrDigit() }\nclass PhoneControlManager', 1)
+        s = s.replace('class PhoneControlManager', '// Unicode-aware multilingual app/action matching.\nclass PhoneControlManager', 1)
     phone.write_text(s, encoding="utf-8")
 
 print("Multilingual Gemini tool normalization applied.")
