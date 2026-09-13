@@ -1,2 +1,4 @@
-Anu mobile functional repair + conversation-wise chat history build verification
-Fix: verify the actual Anu repository build after chat/history and mobile-function repairs
+Anu update:
+1. Dynamic time-based greeting on Home screen (Good morning / afternoon / evening / night)
+2. Clean tone tags like <tone:warm> and tone directives from Anu replies
+3. Chat History redesigned per UI mock layout (Today, Yesterday, Earlier sections, icons, message count, relative time, FAB)
