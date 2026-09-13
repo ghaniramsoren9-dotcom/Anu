@@ -67,6 +67,24 @@ jobs:
           set -euo pipefail
           python3 tools/repair_compile.py
 
+      - name: Repair generated Kotlin regex escapes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root = Path("app/src/main/java")
+          changed = 0
+          for path in root.rglob("*.kt"):
+              text = path.read_text(encoding="utf-8")
+              fixed = re.sub(r'Regex\("([^"]*)\\s', lambda m: 'Regex("' + m.group(1) + '[[:space:]]', text)
+              if fixed != text:
+                  path.write_text(fixed, encoding="utf-8")
+                  changed += 1
+          print(f"Fixed invalid Kotlin regex whitespace escapes in {changed} source file(s).")
+          PY
+
       - name: Normalize Kotlin source escapes
         shell: bash
         run: |
