@@ -67,6 +67,12 @@ jobs:
           set -euo pipefail
           python3 tools/repair_compile.py
 
+      - name: Apply multilingual Gemini command normalization
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/repair_multilingual_commands.py
+
       - name: Repair invalid Kotlin backslash escapes
         shell: bash
         run: |
@@ -82,13 +88,8 @@ jobs:
           for path in root.rglob("*.kt"):
               text = path.read_text(encoding="utf-8")
               fixed = text
-
-              # Kotlin string literals do not accept regex escapes such as \s.
-              # Generated source can contain a single backslash; preserve already
-              # valid double-backslash sequences and repair only single \s.
               fixed, count = re.subn(r"(?<!\\)\\s", r"\\\\s", fixed)
               replacements += count
-
               if fixed != text:
                   path.write_text(fixed, encoding="utf-8")
                   changed += 1
@@ -116,6 +117,15 @@ jobs:
             exit 1
           fi
           echo "Kotlin regex escape verification passed."
+
+      - name: Verify multilingual command support
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'MULTILINGUAL TOOL RULE:' app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
+          grep -q 'canonical app name' app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
+          grep -q 'filter { it.isLetterOrDigit() }' app/src/main/java/com/ghaniram/zoya/PhoneControlManager.kt
+          echo "Multilingual command support verified."
 
       - name: Verify modified source tree
         shell: bash
