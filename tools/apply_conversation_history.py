@@ -262,18 +262,6 @@ if "private fun splitConversations(" not in s:
         }
     }
 
-    fun deleteConversation(id: String) {
-        ensureInitialized()
-        scope.launch {
-            val all = repository.getAllChatMessages()
-            val convMessages = messagesForConversation(all, id)
-            convMessages.forEach { repository.deleteChatMessage(it.id) }
-            val refreshed = repository.getAllChatMessages()
-            val newActive = prefs.getString(ACTIVE_CONVERSATION_PREF, null) ?: "default"
-            _state.update { it.copy(chatMessages = messagesForConversation(refreshed, newActive), chatConversations = conversationSummaries(refreshed), activeConversationId = newActive) }
-        }
-    }
-
     fun tryExecuteDirectAction(text: String): String? {
         val lower = text.trim().lowercase()
         if (lower in listOf("home", "go home", "go to home", "home screen", "open home", "ଘରକୁ ଯାଅ", "home ku ja", "home jao", "ହୋମ", "home କୁ ଯାଅ", "घर जाओ", "होम")) {
@@ -453,7 +441,6 @@ s = p_vm.read_text(encoding="utf-8")
 if "fun newConversation()" not in s:
     s = s.replace("    fun clearMemories() = ZoyaSessionManager.clearMemories()\n", """    fun newConversation() = ZoyaSessionManager.newConversation()
     fun selectConversation(id: String) = ZoyaSessionManager.selectConversation(id)
-    fun deleteConversation(id: String) = ZoyaSessionManager.deleteConversation(id)
     fun clearMemories() = ZoyaSessionManager.clearMemories()
 """, 1)
 p_vm.write_text(s, encoding="utf-8")
