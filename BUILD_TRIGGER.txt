@@ -1,4 +1,7 @@
-Anu mobile update:
-- Dynamic time-based greeting on Home screen (Good morning, Good afternoon, Good evening, Good night)
-- Strip tone tags (<tone:warm>) and metadata directives from Anu chat responses
-- Redesign Chat History screen matching design structure (Today, Yesterday, Earlier sections, contextual cards, message counters, and FAB)
+Anu mobile build fix:
+- Align AnuChatHistoryDialog parameters and call site between apply_conversation_history.py, apply_premium_chat_history_ui.py, and repair_compile.py
+- Fix unresolved Icons.Outlined.ChatBubble icon to Icons.Outlined.ChatBubbleOutline
+- Use valid in-scope callbacks in repair_compile.py
+- Dynamic time-based greeting on Home screen
+- Clean tone tags like <tone:warm> from Anu chat responses
+- Redesign Chat History UI matching design structure

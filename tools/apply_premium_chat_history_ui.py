@@ -96,7 +96,7 @@ fun AnuChatHistoryDialog(
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
-                                        Icons.Outlined.ChatBubble,
+                                        Icons.Outlined.ChatBubbleOutline,
                                         contentDescription = null,
                                         tint = Color(0xFF6339E8),
                                         modifier = Modifier.size(27.dp)
@@ -105,14 +105,29 @@ fun AnuChatHistoryDialog(
                             }
                             Spacer(Modifier.width(12.dp))
                             Column {
-                                Text("Anu", fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF4E28D7))
-                                Text("Assistant", fontSize = 13.sp, color = Color(0xFF64748B))
+                                Text(
+                                    "Anu",
+                                    fontSize = 24.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF4E28D7)
+                                )
+                                Text(
+                                    "Assistant",
+                                    fontSize = 13.sp,
+                                    color = Color(0xFF64748B)
+                                )
                             }
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Surface(shape = RoundedCornerShape(22.dp), color = Color(0xFFEDE7FF)) {
-                                Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = RoundedCornerShape(22.dp),
+                                color = Color(0xFFEDE7FF)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Icon(Icons.Outlined.History, null, tint = Color(0xFF6339E8), modifier = Modifier.size(20.dp))
                                     Spacer(Modifier.width(7.dp))
                                     Text("History", color = Color(0xFF6339E8), fontWeight = FontWeight.Bold, fontSize = 14.sp)
@@ -137,7 +152,11 @@ fun AnuChatHistoryDialog(
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Chat History", fontSize = 29.sp, fontWeight = FontWeight.ExtraBold, color = LocalAnuColors.current.textPrimary)
                             Spacer(Modifier.height(3.dp))
-                            Text("Your past conversations, always here when you need them.", fontSize = 13.sp, color = LocalAnuColors.current.textSecondary)
+                            Text(
+                                "Your past conversations, always here when you need them.",
+                                fontSize = 13.sp,
+                                color = LocalAnuColors.current.textSecondary
+                            )
                         }
                         Surface(shape = CircleShape, color = Color(0xFFEDE7FF)) {
                             IconButton(onClick = onDismiss) {
@@ -151,10 +170,13 @@ fun AnuChatHistoryDialog(
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(18.dp),
-                        color = LocalAnuColors.current.cardBackground,
+                        color = LocalAnuColors.current.surface,
                         border = BorderStroke(1.dp, Color(0xFFD9D1F7))
                     ) {
-                        Row(modifier = Modifier.padding(horizontal = 15.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 15.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Icon(Icons.Default.Search, null, tint = Color(0xFF71809A), modifier = Modifier.size(23.dp))
                             BasicTextField(
                                 value = query,
@@ -171,6 +193,7 @@ fun AnuChatHistoryDialog(
                             Icon(Icons.Outlined.Tune, null, tint = Color(0xFF6339E8), modifier = Modifier.size(22.dp))
                         }
                     }
+
                     Spacer(Modifier.height(14.dp))
                 }
 
@@ -194,36 +217,66 @@ fun AnuChatHistoryDialog(
                                                 "Today" -> Icons.Outlined.WbSunny
                                                 "Yesterday" -> Icons.Outlined.NightsStay
                                                 else -> Icons.Outlined.CalendarMonth
-                                            }, null, tint = Color(0xFF6339E8), modifier = Modifier.size(21.dp)
+                                            },
+                                            null,
+                                            tint = Color(0xFF6339E8),
+                                            modifier = Modifier.size(21.dp)
                                         )
                                         Spacer(Modifier.width(9.dp))
                                         Text(group, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = LocalAnuColors.current.textPrimary)
                                     }
                                     Surface(shape = RoundedCornerShape(14.dp), color = Color(0xFFF0EBFF)) {
-                                        Text("${itemsForGroup.size} conversation${if (itemsForGroup.size == 1) "" else "s"}", modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF6339E8))
+                                        Text(
+                                            "${itemsForGroup.size} conversation${if (itemsForGroup.size == 1) "" else "s"}",
+                                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF6339E8)
+                                        )
                                     }
                                 }
                             }
 
                             items(itemsForGroup, key = { it.id }) { conversation ->
                                 Surface(
-                                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable { onSelectConversation(conversation.id) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(18.dp))
+                                        .clickable { onSelectConversation(conversation.id) },
                                     shape = RoundedCornerShape(18.dp),
-                                    color = LocalAnuColors.current.cardBackground,
+                                    color = LocalAnuColors.current.surface,
                                     border = BorderStroke(1.dp, Color(0xFFE1DCF2)),
                                     shadowElevation = 1.dp
                                 ) {
-                                    Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Surface(modifier = Modifier.size(48.dp), shape = CircleShape, color = Color(0xFFF0EBFF)) {
+                                    Row(
+                                        modifier = Modifier.padding(14.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Surface(
+                                            modifier = Modifier.size(48.dp),
+                                            shape = CircleShape,
+                                            color = Color(0xFFF0EBFF)
+                                        ) {
                                             Box(contentAlignment = Alignment.Center) {
                                                 Icon(Icons.Outlined.ChatBubbleOutline, null, tint = Color(0xFF6339E8), modifier = Modifier.size(23.dp))
                                             }
                                         }
                                         Spacer(Modifier.width(13.dp))
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text(conversation.title.ifBlank { "New conversation" }, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = LocalAnuColors.current.textPrimary, maxLines = 1)
+                                            Text(
+                                                conversation.title.ifBlank { "New conversation" },
+                                                fontSize = 16.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = LocalAnuColors.current.textPrimary,
+                                                maxLines = 1
+                                            )
                                             Spacer(Modifier.height(3.dp))
-                                            Text("Conversation history is saved on this device.", fontSize = 12.sp, color = LocalAnuColors.current.textSecondary, maxLines = 1)
+                                            Text(
+                                                "Conversation history is saved on this device.",
+                                                fontSize = 12.sp,
+                                                color = LocalAnuColors.current.textSecondary,
+                                                maxLines = 1
+                                            )
                                             Spacer(Modifier.height(6.dp))
                                             Row(verticalAlignment = Alignment.CenterVertically) {
                                                 Icon(Icons.Outlined.Schedule, null, tint = Color(0xFF7A879B), modifier = Modifier.size(15.dp))
@@ -263,7 +316,9 @@ fun AnuChatHistoryDialog(
                 text = { Text("New Chat", fontWeight = FontWeight.Bold) },
                 containerColor = Color(0xFF6339E8),
                 contentColor = Color.White,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 20.dp, bottom = 28.dp)
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 20.dp, bottom = 28.dp)
             )
         }
     }

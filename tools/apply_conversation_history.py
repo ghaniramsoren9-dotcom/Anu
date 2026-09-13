@@ -611,7 +611,7 @@ new_box = """            Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = if (showHistoryView) AnuPrimary else AnuLavenderBg,
-                    modifier = Modifier.clickable { showHistoryView = !showHistoryView }
+                    modifier = Modifier.clickable { showChatHistoryDialog = true }
                 ) {
                     Row(Modifier.padding(horizontal = 9.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Outlined.History, contentDescription = null, tint = if (showHistoryView) Color.White else AnuPrimary, modifier = Modifier.size(15.dp))
@@ -653,40 +653,6 @@ if old_box in s and "showHistoryView" not in s:
     s = s.replace(old_box, new_box, 1)
     s = s.replace(old_close, new_close, 1)
 
-# In-screen Chat History Screen toggle
-if "if (showHistoryView) {" not in s and "        // Chat Message List or Empty Placeholder" in s:
-    s = s.replace(
-        """        // Chat Message List or Empty Placeholder""",
-        """        if (showHistoryView) {
-            AnuChatHistoryScreen(
-                conversations = state.chatConversations,
-                activeConversationId = state.activeConversationId,
-                onSelectConversation = { id ->
-                    onSelectConversation(id)
-                    showHistoryView = false
-                },
-                onNewConversation = {
-                    onNewConversation()
-                    showHistoryView = false
-                }
-            )
-        } else {
-        // Chat Message List or Empty Placeholder""",
-        1
-    )
-    s = s.replace(
-        """        }
-    }
-
-    if (showChatHistoryDialog) {""",
-        """        }
-        }
-    }
-
-    if (showChatHistoryDialog) {""",
-        1
-    )
-
 # History Dialog: update signature and provide clean, soft, beautiful Saved conversations list
 if "conversations: List<AnuConversationSummary>" not in s:
     s = s.replace(
@@ -698,7 +664,6 @@ if "conversations: List<AnuConversationSummary>" not in s:
         """fun AnuChatHistoryDialog(
     messages: List<ChatMessage>,
     conversations: List<AnuConversationSummary>,
-    activeConversationId: String,
     onSelectConversation: (String) -> Unit,
     onNewConversation: () -> Unit,
     onDismiss: () -> Unit,
@@ -710,14 +675,20 @@ if "conversations = state.chatConversations" not in s:
     s = s.replace(
         """        AnuChatHistoryDialog(
             messages = state.chatMessages,
-            onDismiss = { showChatHistoryDialog = false },""",
+            onDismiss = { showChatHistoryDialog = false },
+            onClear = onClearChat
+        )""",
         """        AnuChatHistoryDialog(
             messages = state.chatMessages,
             conversations = state.chatConversations,
-            activeConversationId = state.activeConversationId,
             onSelectConversation = { id -> onSelectConversation(id); showChatHistoryDialog = false },
             onNewConversation = { onNewConversation(); showChatHistoryDialog = false },
-            onDismiss = { showChatHistoryDialog = false },""", 1
+            onDismiss = { showChatHistoryDialog = false },
+            onClear = {
+                onClearChat()
+                showChatHistoryDialog = false
+            }
+        )""", 1
     )
 
 if "val filteredConversations =" not in s:
@@ -786,333 +757,25 @@ if "Saved conversations" not in s:
     )
 
 
-# Append AnuChatHistoryScreen, cleanAnuReply, formatRelativeTime, getConversationIconAndColor
-if "@Composable\nfun AnuChatHistoryScreen(" not in s:
-    history_impl = """
+# Append cleanAnuReply helper function to MainActivity.kt
+if "fun cleanAnuReply(" not in s:
+    clean_impl = """
 
-// -------------------------------------------------------------
-// Chat History Screen & Helpers (Matching Image Structure)
-// -------------------------------------------------------------
-
+// Clean tone tags and unnecessary directives from Anu replies
 fun cleanAnuReply(raw: String): String {
     if (raw.isBlank()) return ""
     var res = raw
-    res = res.replace(Regex("<thought>[\\s\\S]*?</thought>", RegexOption.IGNORE_CASE), "")
+    res = res.replace(Regex("<thought>[\\\\s\\\\S]*?</thought>", RegexOption.IGNORE_CASE), "")
     res = res.replace(Regex("<tone[;:][^>]+>", RegexOption.IGNORE_CASE), "")
     res = res.replace(Regex("<(emotion|style|mood|gesture|action)[;:][^>]+>", RegexOption.IGNORE_CASE), "")
     res = res.replace(Regex("<[a-zA-Z0-9_-]+[;:][^>]+>", RegexOption.IGNORE_CASE), "")
     res = res.replace(Regex("</?(whisper|sigh|gasp|laughter|chuckle|pause)>", RegexOption.IGNORE_CASE), "")
-    res = res.replace(Regex("\\[(SYSTEM ACTION|DIRECT ACTION|ACTION|TOOL)[^\\]]*\\]", RegexOption.IGNORE_CASE), "")
-    res = res.replace(Regex("^(Anu|Assistant|You)\\s*:\\s*", RegexOption.IGNORE_CASE), "")
+    res = res.replace(Regex("\\\\[(SYSTEM ACTION|DIRECT ACTION|ACTION|TOOL)[^\\\\]]*\\\\]", RegexOption.IGNORE_CASE), "")
+    res = res.replace(Regex("^(Anu|Assistant|You)\\\\s*:\\\\s*", RegexOption.IGNORE_CASE), "")
     return res.trim()
 }
-
-fun formatRelativeTime(timestamp: Long): String {
-    if (timestamp <= 0L) return "Recently"
-    val now = System.currentTimeMillis()
-    val diff = now - timestamp
-    val calNow = Calendar.getInstance()
-    val calMsg = Calendar.getInstance().apply { timeInMillis = timestamp }
-    val isToday = calNow.get(Calendar.YEAR) == calMsg.get(Calendar.YEAR) &&
-                  calNow.get(Calendar.DAY_OF_YEAR) == calMsg.get(Calendar.DAY_OF_YEAR)
-    if (isToday) {
-        val minutes = diff / (60 * 1000)
-        val hours = diff / (60 * 60 * 1000)
-        return when {
-            minutes < 2 -> "Just now"
-            minutes < 60 -> "${minutes}m ago"
-            hours <= 1L -> "1 hour ago"
-            hours < 24L -> "$hours hours ago"
-            else -> "Today"
-        }
-    }
-    val calYesterday = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
-    val isYesterday = calYesterday.get(Calendar.YEAR) == calMsg.get(Calendar.YEAR) &&
-                      calYesterday.get(Calendar.DAY_OF_YEAR) == calMsg.get(Calendar.DAY_OF_YEAR)
-    if (isYesterday) return "Yesterday"
-    val sdf = SimpleDateFormat("MMM d", Locale.US)
-    return sdf.format(Date(timestamp))
-}
-
-fun getConversationIconAndColor(title: String): Triple<Color, Color, androidx.compose.ui.graphics.vector.ImageVector> {
-    val t = title.lowercase()
-    return when {
-        t.contains("youtube") || t.contains("video") || t.contains("ୟୁଟ୍ୟୁବ") ->
-            Triple(Color(0xFFFFEBEE), Color(0xFFE53935), Icons.Outlined.SmartDisplay)
-        t.contains("phone") || t.contains("call") || t.contains("app") || t.contains("ଫୋନ") ->
-            Triple(Color(0xFFE3F2FD), Color(0xFF1E88E5), Icons.Outlined.Smartphone)
-        t.contains("gemini") || t.contains("ai") || t.contains("key") ->
-            Triple(Color(0xFFF3E5F5), Color(0xFF8E24AA), Icons.Outlined.AutoAwesome)
-        t.contains("android") || t.contains("ui") || t.contains("fix") || t.contains("layout") ->
-            Triple(Color(0xFFE8F5E9), Color(0xFF43A047), Icons.Outlined.Android)
-        t.contains("project") || t.contains("code") || t.contains("setup") || t.contains("</>") ->
-            Triple(Color(0xFFEDE7F6), Color(0xFF5E35B1), Icons.Outlined.Code)
-        t.contains("study") || t.contains("plan") || t.contains("history") || t.contains("idea") ->
-            Triple(Color(0xFFFFF8E1), Color(0xFFFB8C00), Icons.Outlined.Lightbulb)
-        else ->
-            Triple(AnuLavenderBg, AnuPrimary, Icons.Outlined.ChatBubbleOutline)
-    }
-}
-
-@Composable
-fun AnuChatHistoryScreen(
-    conversations: List<AnuConversationSummary>,
-    activeConversationId: String,
-    onSelectConversation: (String) -> Unit,
-    onNewConversation: () -> Unit
-) {
-    var searchQuery by remember { mutableStateOf("") }
-
-    val filtered = remember(conversations, searchQuery) {
-        if (searchQuery.isBlank()) conversations
-        else conversations.filter {
-            it.title.contains(searchQuery, ignoreCase = true) ||
-            it.snippet.contains(searchQuery, ignoreCase = true)
-        }
-    }
-
-    val groups = remember(filtered) {
-        val calNow = Calendar.getInstance()
-        val todayYear = calNow.get(Calendar.YEAR)
-        val todayDay = calNow.get(Calendar.DAY_OF_YEAR)
-
-        val calYesterday = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
-        val yesterdayYear = calYesterday.get(Calendar.YEAR)
-        val yesterdayDay = calYesterday.get(Calendar.DAY_OF_YEAR)
-
-        val today = mutableListOf<AnuConversationSummary>()
-        val yesterday = mutableListOf<AnuConversationSummary>()
-        val earlier = mutableListOf<AnuConversationSummary>()
-
-        filtered.forEach { conv ->
-            val cal = Calendar.getInstance().apply { timeInMillis = conv.updatedAt }
-            val y = cal.get(Calendar.YEAR)
-            val d = cal.get(Calendar.DAY_OF_YEAR)
-            when {
-                y == todayYear && d == todayDay -> today.add(conv)
-                y == yesterdayYear && d == yesterdayDay -> yesterday.add(conv)
-                else -> earlier.add(conv)
-            }
-        }
-
-        val map = linkedMapOf<String, List<AnuConversationSummary>>()
-        if (today.isNotEmpty()) map["☀️ Today"] = today
-        if (yesterday.isNotEmpty()) map["🌙 Yesterday"] = yesterday
-        if (earlier.isNotEmpty()) map["📅 Earlier"] = earlier
-        if (map.isEmpty() && filtered.isNotEmpty()) {
-            map["☀️ Today"] = filtered
-        }
-        map
-    }
-
-    Box(modifier = Modifier.fillMaxSize().background(AnuBackground)) {
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(top = 8.dp, bottom = 80.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            item {
-                Column {
-                    Text(
-                        text = "Chat History",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = AnuTextDark
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "Your past conversations, always here when you need them.",
-                        fontSize = 13.sp,
-                        color = AnuTextMuted
-                    )
-                    Spacer(Modifier.height(14.dp))
-                    Surface(
-                        shape = RoundedCornerShape(24.dp),
-                        color = Color.White,
-                        border = BorderStroke(1.dp, AnuBorder),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(46.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 14.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Outlined.Search,
-                                contentDescription = null,
-                                tint = AnuTextMuted,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            BasicTextField(
-                                value = searchQuery,
-                                onValueChange = { searchQuery = it },
-                                modifier = Modifier.weight(1f),
-                                singleLine = true,
-                                textStyle = TextStyle(fontSize = 13.5.sp, color = AnuTextDark),
-                                decorationBox = { inner ->
-                                    if (searchQuery.isEmpty()) {
-                                        Text("Search conversations...", fontSize = 13.sp, color = AnuTextMuted)
-                                    }
-                                    inner()
-                                }
-                            )
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(20.dp)) {
-                                    Icon(Icons.Outlined.Close, null, tint = AnuTextMuted, modifier = Modifier.size(14.dp))
-                                }
-                                Spacer(Modifier.width(4.dp))
-                            }
-                            Icon(
-                                Icons.Outlined.Tune,
-                                contentDescription = "Filter",
-                                tint = AnuPrimary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(6.dp))
-                }
-            }
-
-            if (filtered.isEmpty()) {
-                item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 40.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Outlined.ChatBubbleOutline, null, tint = AnuTextMuted, modifier = Modifier.size(40.dp))
-                            Spacer(Modifier.height(10.dp))
-                            Text("No conversations found.", fontSize = 13.sp, color = AnuTextMuted)
-                        }
-                    }
-                }
-            } else {
-                groups.forEach { (sectionTitle, convList) ->
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 8.dp, bottom = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = sectionTitle,
-                                fontSize = 13.5.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = AnuTextDark
-                            )
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = AnuLavenderBg
-                            ) {
-                                Text(
-                                    text = "${convList.size} conversation${if (convList.size > 1) "s" else ""}",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = AnuPrimary,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    items(convList, key = { it.id }) { conv ->
-                        val isCurrent = conv.id == activeConversationId
-                        val (iconBg, iconTint, icon) = getConversationIconAndColor(conv.title)
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = if (isCurrent) AnuLavenderBg.copy(alpha = 0.45f) else Color.White,
-                            border = BorderStroke(1.dp, if (isCurrent) AnuPrimary.copy(alpha = 0.5f) else AnuBorder),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onSelectConversation(conv.id) }
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(42.dp)
-                                        .background(iconBg, RoundedCornerShape(12.dp)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
-                                }
-                                Spacer(Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = conv.title,
-                                        fontSize = 13.5.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = AnuTextDark,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Spacer(Modifier.height(2.dp))
-                                    Text(
-                                        text = if (conv.snippet.isNotBlank()) conv.snippet else "${conv.title}...",
-                                        fontSize = 12.sp,
-                                        color = AnuTextMuted,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Spacer(Modifier.height(4.dp))
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Outlined.Schedule, contentDescription = null, tint = AnuTextMuted, modifier = Modifier.size(11.dp))
-                                        Spacer(Modifier.width(3.dp))
-                                        Text(formatRelativeTime(conv.updatedAt), fontSize = 10.5.sp, color = AnuTextMuted)
-                                        Text(" • ", fontSize = 10.5.sp, color = AnuTextMuted)
-                                        Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = AnuTextMuted, modifier = Modifier.size(11.dp))
-                                        Spacer(Modifier.width(3.dp))
-                                        Text("${conv.messageCount} messages", fontSize = 10.5.sp, color = AnuTextMuted)
-                                    }
-                                }
-                                Spacer(Modifier.width(6.dp))
-                                Icon(Icons.Outlined.MoreVert, contentDescription = "Options", tint = AnuTextMuted, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(2.dp))
-                                Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = AnuTextMuted, modifier = Modifier.size(16.dp))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Floating Action Button (+ New Chat)
-        Surface(
-            shape = RoundedCornerShape(22.dp),
-            color = AnuPrimary,
-            shadowElevation = 6.dp,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 16.dp, bottom = 16.dp)
-                .clickable { onNewConversation() }
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
-            ) {
-                Icon(Icons.Outlined.Add, contentDescription = "New Chat", tint = Color.White, modifier = Modifier.size(22.dp))
-                Text("New Chat", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
-            }
-        }
-    }
-}
 """
-    s = s.rstrip() + "\\n" + history_impl
+    s = s.rstrip() + "\\n" + clean_impl
 
 p_main.write_text(s, encoding="utf-8")
 print("MainActivity updated with clean, soft, minimized chat & history section")
