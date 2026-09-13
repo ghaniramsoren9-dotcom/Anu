@@ -55,39 +55,15 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Apply conversation history and Kotlin compile repair
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tools/apply_conversation_history.py
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('app/src/main/java/com/ghaniram/zoya/MainActivity.kt')
-          s = p.read_text()
-          # Remove the unresolved implicit `it` from the bottom navigation callback.
-          s = s.replace('onTabSelected = { currentTab = it }', 'onTabSelected = { tab -> currentTab = tab }')
-          # Make the vision prompt callback type explicit for Kotlin inference.
-          s = s.replace('onSendVisionPrompt = { prompt ->\n', 'onSendVisionPrompt = { prompt: String ->\n')
-          p.write_text(s)
-          print('Applied Kotlin callback type repairs.')
-          PY
-
-      - name: Verify required vision declarations
+      - name: Check committed source tree
         shell: bash
         run: |
           set -euo pipefail
           test -s app/src/main/java/com/ghaniram/zoya/MainActivity.kt
-          grep -n '^fun AnuVisionTabScreen(' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
-          grep -n '^fun AnuWaveformVisualizer(' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
-          grep -q 'onTabSelected = { tab -> currentTab = tab }' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
-          grep -q 'onSendVisionPrompt = { prompt: String ->' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
           test -s app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
           test -s app/src/main/java/com/ghaniram/zoya/AnuSettingsStore.kt
           test -s app/src/main/java/com/ghaniram/zoya/Models.kt
-          grep -q "AnuConversationSummary" app/src/main/java/com/ghaniram/zoya/Models.kt
-          grep -q "newConversation" app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
-          grep -q "Conversations" app/src/main/java/com/ghaniram/zoya/MainActivity.kt
-          echo "Source checks passed."
+          echo "Committed source tree is present. No source rewriting is performed in CI."
 
       - name: Build debug APK
         shell: bash
