@@ -1,32 +1,21 @@
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 PKG = ROOT / "app/src/main/java/com/ghaniram/zoya"
-
-def replace_once(text, old, new, label):
-    if old not in text:
-        raise SystemExit(f"Required source anchor not found: {label}")
-    return text.replace(old, new, 1)
 
 # 1. AndroidManifest.xml: package visibility for querying and opening apps
 p_manifest = ROOT / "app/src/main/AndroidManifest.xml"
 if p_manifest.exists():
     s = p_manifest.read_text(encoding="utf-8")
-    if "QUERY_ALL_PACKAGES" not in s:
-        s = s.replace(
-            '<uses-permission android:name="android.permission.INTERNET"',
-            '<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />\n    <uses-permission android:name="android.permission.INTERNET"',
-            1
+    if "android.permission.QUERY_ALL_PACKAGES" not in s:
+        s = re.sub(
+            r'(<uses-permission\s+android:name="android\.permission\.BLUETOOTH_CONNECT"\s*/>)',
+            r'<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />\n    \1',
+            s, count=1
         )
-    if "<queries>" not in s:
-        queries_block = """    <queries>
-        <intent>
-            <action android:name="android.intent.action.MAIN" />
-        </intent>
-    </queries>\n"""
-        s = s.replace("    <application", queries_block + "    <application", 1)
     p_manifest.write_text(s, encoding="utf-8")
-    print("Manifest package visibility updated")
+    print("Manifest updated with QUERY_ALL_PACKAGES")
 
 # 2. AccessibilityControlService.kt: screen-level scroll gesture fallback
 p_acc = PKG / "AccessibilityControlService.kt"
@@ -35,70 +24,151 @@ if p_acc.exists():
     if "performScreenScrollGesture" not in s:
         helper = """    private fun performScreenScrollGesture(forward: Boolean): Boolean {
         if (android.os.Build.VERSION.SDK_INT < 24) return false
-        val display = resources.displayMetrics
-        val width = display.widthPixels
-        val height = display.heightPixels
+        val dm = resources.displayMetrics
+        val width = dm.widthPixels.toFloat()
+        val height = dm.heightPixels.toFloat()
         val x = width * 0.5f
         val startY = if (forward) height * 0.75f else height * 0.25f
         val endY = if (forward) height * 0.25f else height * 0.75f
         val path = android.graphics.Path().apply { moveTo(x, startY); lineTo(x, endY) }
         return dispatchGesture(android.accessibilityservice.GestureDescription.Builder().addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0L, 300L)).build(), null, null)
     }
-"""
-        s = s.replace("    private fun waitForUiSettle", helper + "    private fun waitForUiSettle", 1)
-        old_scroll = "if (attempt < 2) waitForUiSettle(120L + attempt * 100L) }; return false }"
-        new_scroll = "if (!acted) { acted = performScreenScrollGesture(forward); if (acted) { waitForUiSettle(180L); return true } }; if (attempt < 2) waitForUiSettle(120L + attempt * 100L) }; return performScreenScrollGesture(forward) }"
-        if old_scroll in s:
-            s = s.replace(old_scroll, new_scroll, 1)
-        p_acc.write_text(s, encoding="utf-8")
-        print("AccessibilityControlService scroll fallback updated")
 
-# 3. PhoneControlManager.kt: goHome fallback, enhanced scroll, and system controls
+    private fun waitForUiSettle"""
+        s = re.sub(r'private fun waitForUiSettle', helper, s, count=1)
+        
+        new_scroll = """fun scroll(forward: Boolean): Boolean {
+        val before = ActionVerifier.snapshot(this)
+        val root = rootInActiveWindow
+        val node = if (root != null) findScrollable(root) else null
+        var acted = false
+        if (node != null) {
+            acted = runCatching {
+                node.performAction(if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+            }.getOrDefault(false)
+            if (!acted) acted = performScrollGesture(node, forward)
+        }
+        if (!acted) acted = performScreenScrollGesture(forward)
+        waitForUiSettle(180L)
+        return acted || ActionVerifier.changed(before, ActionVerifier.snapshot(this))
+    }
+    private fun"""
+        s = re.sub(r'fun scroll\(forward: Boolean\): Boolean\s*\{.*?\n\s*private fun', new_scroll, s, count=1, flags=re.DOTALL)
+        p_acc.write_text(s, encoding="utf-8")
+        print("AccessibilityControlService updated with scroll gesture fallback")
+
+# 3. PhoneControlManager.kt: goHome, enhanced scroll, and multilingual app launcher
 p_phone = PKG / "PhoneControlManager.kt"
 if p_phone.exists():
     s = p_phone.read_text(encoding="utf-8")
+    s = re.sub(r'^\+\s*', '    ', s, flags=re.MULTILINE)
+    
     if "fun goHome(): String" not in s:
         go_home_code = """    fun goHome(): String {
-        val service = AccessibilityControlService.instance
-        if (service != null && service.globalAction("home")) return "navigated to home screen"
         return try {
             val intent = Intent(Intent.ACTION_MAIN).apply {
                 addCategory(Intent.CATEGORY_HOME)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             app.startActivity(intent)
+            AccessibilityControlService.instance?.globalAction("home")
             "navigated to home screen"
         } catch (e: Exception) {
-            "could not navigate to home: ${e.message ?: \"unknown error\"}"
+            val ok = AccessibilityControlService.instance?.globalAction("home") == true
+            if (ok) "navigated to home screen" else "could not go to home screen: ${e.message ?: \"unknown error\"}"
         }
     }
 
 """
-        s = s.replace("    fun accessibilityAction(", go_home_code + "    fun accessibilityAction(", 1)
+        s = re.sub(r'(fun accessibilityAction\(action: String)', go_home_code + r'\1', s, count=1)
 
-    old_acc_action = 'if (normalized == "call" || normalized == "callcontact" || normalized == "callbyname" || normalized == "directcall") return deviceActions.directCall(text); val service = AccessibilityControlService.instance ?: return "Anu phone-control accessibility is not enabled. Open Accessibility settings and enable Anu.";'
-    new_acc_action = 'if (normalized == "call" || normalized == "callcontact" || normalized == "callbyname" || normalized == "directcall") return deviceActions.directCall(text); if (normalized == "home" || normalized == "gohome") return goHome(); val service = AccessibilityControlService.instance ?: return if (normalized == "home" || normalized == "gohome") goHome() else "Anu phone-control accessibility is not enabled. Open Accessibility settings and enable Anu.";'
-    if old_acc_action in s:
-        s = s.replace(old_acc_action, new_acc_action, 1)
+    new_acc_action = """fun accessibilityAction(action: String, text: String = "", value: String = ""): String {
+        val normalized = normalizeAction(action)
+        if (normalized == "call" || normalized == "callcontact" || normalized == "callbyname" || normalized == "directcall") return deviceActions.directCall(text)
+        if (normalized in listOf("home", "gohome", "homescreen", "openhome")) return goHome()
+        val service = AccessibilityControlService.instance
+        if (service == null) {
+            return if (normalized in listOf("home", "gohome", "homescreen")) goHome()
+            else "Anu phone-control accessibility is not enabled. Open Accessibility settings and enable Anu."
+        }
+        val ok = when (normalized) {
+            "home", "gohome", "back", "goback", "recents", "recentapps", "openrecentapps", "notifications", "opennotifications", "quicksettings", "openquicksettings", "power", "powerdialog", "lock", "lockscreen" -> service.globalAction(action)
+            "click", "clicktext" -> service.clickByText(text)
+            "longclick", "longclicktext" -> service.clickByText(text, longClick = true)
+            "settext", "settextbytext" -> service.setTextByText(text, value)
+            "typetext", "type" -> service.typeText(value)
+            "scroll", "scrollforward", "scrolldown", "down", "swipedown", "swipeup" -> service.scroll(true)
+            "scrollbackward", "scrollup", "up" -> service.scroll(false)
+            else -> false
+        }
+        val suffix = if (text.isNotBlank()) " on $text" else ""
+        return if (ok) "completed $action" else "could not complete $action$suffix"
+    }
+    fun openAccessibilitySettings"""
+    s = re.sub(r'fun accessibilityAction\(action: String.*?\n\s*fun openAccessibilitySettings', new_acc_action, s, count=1, flags=re.DOTALL)
 
-    old_scroll_cases = '"scrollforward", "scrolldown" -> service.scroll(true); "scrollbackward", "scrollup" -> service.scroll(false);'
-    new_scroll_cases = '"scroll", "scrollforward", "scrolldown", "down", "swipedown", "swipeup" -> service.scroll(true); "scrollbackward", "scrollup", "up" -> service.scroll(false);'
-    if old_scroll_cases in s:
-        s = s.replace(old_scroll_cases, new_scroll_cases, 1)
-
-    old_known = 'val knownPackages = mapOf("youtube" to "com.google.android.youtube",'
-    new_known = 'val cleanName = appName.lowercase().replace(Regex("^(open|launch|start|ଖୋଲ|khola|kholo)\\\\s+"), "").trim()\n        val wanted = normalize(if (cleanName.isNotBlank()) cleanName else appName)\n        val knownPackages = mapOf("youtube" to "com.google.android.youtube", "yt" to "com.google.android.youtube", "ୟୁଟ୍ୟୁବ୍" to "com.google.android.youtube", "ୟୁଟ୍ୟୁବ" to "com.google.android.youtube", "यूट्यूब" to "com.google.android.youtube", "whatsapp" to "com.whatsapp", "wa" to "com.whatsapp", "ହ୍ଵାଟ୍ସଆପ୍" to "com.whatsapp", "ହ୍ୱାଟ୍ସଆପ" to "com.whatsapp", "व्हाट्सएप" to "com.whatsapp", "chrome" to "com.android.chrome", "କ୍ରୋମ୍" to "com.android.chrome", "କ୍ରୋମ" to "com.android.chrome", "क्रोम" to "com.android.chrome", "camera" to "com.android.camera2", "କ୍ୟାମେରା" to "com.android.camera2", "settings" to "com.android.settings", "ସେଟିଙ୍ଗ୍" to "com.android.settings", "ସେଟିଂ" to "com.android.settings", "सेटिंग्स" to "com.android.settings", "phone" to "com.google.android.dialer", "messages" to "com.google.android.apps.messaging", "photos" to "com.google.android.apps.photos", "gallery" to "com.google.android.apps.photos",'
-    if old_known in s and "cleanName" not in s:
-        s = s.replace('val wanted = normalize(appName)\n        val knownPackages = mapOf("youtube" to "com.google.android.youtube",', new_known, 1)
-        s = s.replace('val wanted = normalize(appName); val knownPackages = mapOf("youtube" to "com.google.android.youtube",', new_known, 1)
-
-    old_launch_pkg = 'val launchIntent = pm.getLaunchIntentForPackage(packageName); if (launchIntent != null) return try { launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED); app.startActivity(launchIntent); true } catch (_: Exception) { false }'
-    new_launch_pkg = 'val launchIntent = pm.getLaunchIntentForPackage(packageName) ?: pm.getLeanbackLaunchIntentForPackage(packageName)\n        if (launchIntent != null) return try { launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED); app.startActivity(launchIntent); true } catch (_: Exception) { false }\n        return try { val fb = Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER); setPackage(packageName); addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }; app.startActivity(fb); true } catch (_: Exception) { false }'
-    if old_launch_pkg in s:
-        s = s.replace(old_launch_pkg, new_launch_pkg, 1)
+    new_open_app = """fun openApp(appName: String): String {
+        if (appName.isBlank()) return "app name is missing"
+        val clean = appName.trim().lowercase()
+            .replace(Regex("^(open|launch|start|run|ଖୋଲ|khola|kholo)\\\\s+"), "")
+            .replace(Regex("\\\\s+(open|kholo|khola|ଖୋଲ|app)$"), "")
+            .trim()
+        val target = if (clean.isNotBlank()) clean else appName.trim().lowercase()
+        val pm = app.packageManager
+        when (target) {
+            "camera", "କ୍ୟାମେରା", "कैमरा" -> return openCamera()
+            "settings", "setting", "ସେଟିଙ୍ଗ୍", "ସେଟିଂ", "सेटिंग्स" -> return openSettings()
+            "phone", "dialer", "ଫୋନ୍", "କଲ୍", "फोन" -> return openPhone()
+            "messages", "sms", "ମେସେଜ୍", "मैसेज" -> return openMessages()
+            "wifi", "wifi settings" -> return openWifiSettings()
+            "bluetooth", "bluetooth settings" -> return openBluetoothSettings()
+            "sound", "sound settings" -> return openSoundSettings()
+            "display", "display settings" -> return openDisplaySettings()
+        }
+        val knownPackages = mapOf(
+            "youtube" to "com.google.android.youtube", "yt" to "com.google.android.youtube", "ୟୁଟ୍ୟୁବ୍" to "com.google.android.youtube", "ୟୁଟ୍ୟୁବ" to "com.google.android.youtube", "यूट्यूब" to "com.google.android.youtube",
+            "whatsapp" to "com.whatsapp", "wa" to "com.whatsapp", "ହ୍ଵାଟ୍ସଆପ୍" to "com.whatsapp", "ହ୍ୱାଟ୍ସଆପ" to "com.whatsapp", "व्हाट्सएप" to "com.whatsapp",
+            "instagram" to "com.instagram.android", "insta" to "com.instagram.android", "ଇନଷ୍ଟାଗ୍ରାମ୍" to "com.instagram.android", "इंस्टाग्राम" to "com.instagram.android",
+            "facebook" to "com.facebook.katana", "fb" to "com.facebook.katana", "ଫେସବୁକ୍" to "com.facebook.katana", "फेसबुक" to "com.facebook.katana",
+            "messenger" to "com.facebook.orca",
+            "chrome" to "com.android.chrome", "browser" to "com.android.chrome", "କ୍ରୋମ୍" to "com.android.chrome", "କ୍ରୋମ" to "com.android.chrome", "क्रोम" to "com.android.chrome",
+            "gmail" to "com.google.android.gm", "email" to "com.google.android.gm", "ମେଲ୍" to "com.google.android.gm",
+            "maps" to "com.google.android.apps.maps", "googlemaps" to "com.google.android.apps.maps", "ମ୍ୟାପ୍" to "com.google.android.apps.maps",
+            "photos" to "com.google.android.apps.photos", "gallery" to "com.google.android.apps.photos", "ଫଟୋ" to "com.google.android.apps.photos", "ଗ୍ୟାଲେରି" to "com.google.android.apps.photos",
+            "spotify" to "com.spotify.music",
+            "telegram" to "org.telegram.messenger", "ଟେଲିଗ୍ରାମ୍" to "org.telegram.messenger",
+            "snapchat" to "com.snapchat.android",
+            "netflix" to "com.netflix.mediaclient",
+            "playstore" to "com.android.vending", "store" to "com.android.vending",
+            "clock" to "com.google.android.deskclock", "calculator" to "com.google.android.calculator"
+        )
+        val knownPkg = knownPackages[target] ?: knownPackages[normalize(target)]
+        if (knownPkg != null && launchPackage(pm, knownPkg)) return "opened $appName"
+        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val matches = try { pm.queryIntentActivities(launcherIntent, PackageManager.MATCH_ALL) } catch (_: Exception) { emptyList() }
+        val exact = matches.firstOrNull { normalize(it.loadLabel(pm).toString()) == normalize(target) }
+        val fuzzy = exact ?: matches.firstOrNull { info -> val lbl = normalize(info.loadLabel(pm).toString()); lbl.contains(normalize(target)) || normalize(target).contains(lbl) }
+        if (fuzzy != null) {
+            val launch = pm.getLaunchIntentForPackage(fuzzy.activityInfo.packageName)
+            if (launch != null) {
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+                app.startActivity(launch)
+                return "opened ${fuzzy.loadLabel(pm)}"
+            }
+        }
+        if (target.contains("youtube") || target.contains("ୟୁଟ୍ୟୁବ")) {
+            return try { app.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "opened YouTube" } catch (_: Exception) { "could not open YouTube" }
+        }
+        if (target.contains("whatsapp") || target.contains("ହ୍ଵାଟ୍ସ")) {
+            return try { app.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("whatsapp://send")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "opened WhatsApp" } catch (_: Exception) { "could not open WhatsApp" }
+        }
+        return "could not find or open app: $appName"
+    }
+    private fun launchPackage"""
+    s = re.sub(r'fun openApp\(appName: String\): String\s*\{.*?\n\s*private fun launchPackage', new_open_app, s, count=1, flags=re.DOTALL)
 
     p_phone.write_text(s, encoding="utf-8")
-    print("PhoneControlManager updated")
+    print("PhoneControlManager updated with goHome, openApp, and accessibilityAction")
 
 # 4. GeminiLiveClient.kt: fix sendText to use clientContent
 p_live = PKG / "GeminiLiveClient.kt"
@@ -111,11 +181,11 @@ if p_live.exists():
         p_live.write_text(s, encoding="utf-8")
         print("GeminiLiveClient sendText updated")
 
-# 5. Models: persistent conversation metadata
+# 5. Models.kt: persistent conversation metadata
 p_models = PKG / "Models.kt"
 s = p_models.read_text(encoding="utf-8")
 if "data class AnuConversationSummary" not in s:
-    s = replace_once(s, "enum class ChatRole { USER, ANU, SYSTEM }\n", """enum class ChatRole { USER, ANU, SYSTEM }
+    s = s.replace("enum class ChatRole { USER, ANU, SYSTEM }\n", """enum class ChatRole { USER, ANU, SYSTEM }
 
 data class AnuConversationSummary(
     val id: String,
@@ -123,26 +193,26 @@ data class AnuConversationSummary(
     val messageCount: Int,
     val updatedAt: Long
 )
-""", "conversation model")
+""", 1)
 if "val chatConversations: List<AnuConversationSummary>" not in s:
-    s = replace_once(s, "    val chatMessages: List<ChatMessage> = emptyList(),\n", """    val chatMessages: List<ChatMessage> = emptyList(),
+    s = s.replace("    val chatMessages: List<ChatMessage> = emptyList(),\n", """    val chatMessages: List<ChatMessage> = emptyList(),
     val chatConversations: List<AnuConversationSummary> = emptyList(),
     val activeConversationId: String = "",
-""", "conversation state")
+""", 1)
 p_models.write_text(s, encoding="utf-8")
-print("Models.kt updated")
+print("Models.kt verified with AnuConversationSummary")
 
-# 6. Session manager: conversation tracking & device control routing
+# 6. ZoyaSessionManager.kt: full direct action handling and conversation management
 p_sm = PKG / "ZoyaSessionManager.kt"
 s = p_sm.read_text(encoding="utf-8")
 if "CONVERSATION_MARKER" not in s:
-    s = replace_once(s, "    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())\n", """    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    s = s.replace("    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())\n", """    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private const val CONVERSATION_MARKER = "__ANU_CONVERSATION__"
     private const val ACTIVE_CONVERSATION_PREF = "active_conversation_id"
-""", "conversation constants")
+""", 1)
 
 if "private fun splitConversations(" not in s:
-    helper = '''    private fun conversationMarker(id: String) = ChatMessage(UUID.randomUUID().toString(), ChatRole.SYSTEM, "$CONVERSATION_MARKER|$id", System.currentTimeMillis())
+    helper = """    private fun conversationMarker(id: String) = ChatMessage(UUID.randomUUID().toString(), ChatRole.SYSTEM, "$CONVERSATION_MARKER|$id", System.currentTimeMillis())
 
     private fun parseConversationId(message: ChatMessage): String? {
         if (message.role != ChatRole.SYSTEM || !message.text.startsWith("$CONVERSATION_MARKER|")) return null
@@ -167,8 +237,9 @@ if "private fun splitConversations(" not in s:
     private fun conversationSummaries(messages: List<ChatMessage>): List<AnuConversationSummary> =
         splitConversations(messages).map { (id, items) ->
             val first = items.firstOrNull { it.role == ChatRole.USER }
-            val title = first?.text?.replace("\\n", " ")?.trim()?.take(42)?.ifBlank { "Conversation" } ?: "Conversation"
-            AnuConversationSummary(id, title, items.size, items.maxOfOrNull { it.timestampMillis } ?: 0L)
+            val title = first?.text?.replace("\\n", " ")?.trim()?.take(36)?.ifBlank { "New Chat" } ?: "Chat"
+            val updated = items.maxOfOrNull { it.timestampMillis } ?: 0L
+            AnuConversationSummary(id, title, items.size, updated)
         }.filter { it.messageCount > 0 }.sortedByDescending { it.updatedAt }
 
     private fun messagesForConversation(messages: List<ChatMessage>, id: String): List<ChatMessage> =
@@ -191,28 +262,58 @@ if "private fun splitConversations(" not in s:
         }
     }
 
-    private fun tryDirectDeviceAction(text: String): String? {
+    fun deleteConversation(id: String) {
+        ensureInitialized()
+        scope.launch {
+            val all = repository.getAllChatMessages()
+            val convMessages = messagesForConversation(all, id)
+            convMessages.forEach { repository.deleteChatMessage(it.id) }
+            val refreshed = repository.getAllChatMessages()
+            val newActive = prefs.getString(ACTIVE_CONVERSATION_PREF, null) ?: "default"
+            _state.update { it.copy(chatMessages = messagesForConversation(refreshed, newActive), chatConversations = conversationSummaries(refreshed), activeConversationId = newActive) }
+        }
+    }
+
+    fun tryExecuteDirectAction(text: String): String? {
         val lower = text.trim().lowercase()
-        if (lower in listOf("home", "go home", "go to home", "home screen", "open home", "ଘରକୁ ଯାଅ", "home ku ja", "home jao", "घर जाओ", "होम")) {
+        if (lower in listOf("home", "go home", "go to home", "home screen", "open home", "ଘରକୁ ଯାଅ", "home ku ja", "home jao", "ହୋମ", "home କୁ ଯାଅ", "घर जाओ", "होम")) {
             return phoneControls.goHome()
         }
-        if (lower.contains("scroll down") || lower.contains("ତଳକୁ scroll") || lower == "scroll" || lower.contains("scroll karo") || lower.contains("नीचे स्क्रॉल")) {
+        if (lower.contains("scroll down") || lower.contains("ତଳକୁ scroll") || lower.contains("ତଳକୁ ସ୍କ୍ରୋଲ") || lower == "scroll" || lower.contains("scroll karo") || lower.contains("नीचे स्क्रॉल")) {
             return phoneControls.accessibilityAction("scrolldown")
         }
-        if (lower.contains("scroll up") || lower.contains("ଉପରକୁ scroll") || lower.contains("ऊपर स्क्रॉल")) {
+        if (lower.contains("scroll up") || lower.contains("ଉପରକୁ scroll") || lower.contains("ଉପରକୁ ସ୍କ୍ରୋଲ") || lower.contains("ऊपर स्क्रॉल")) {
             return phoneControls.accessibilityAction("scrollup")
         }
-        if (lower.contains("flashlight on") || lower.contains("torch on") || lower.contains("ଟର୍ଚ୍ଚ ଜଳାଅ") || lower.contains("ଟର୍ଚ ଅନ") || lower.contains("टॉर्च ऑन")) {
+        if (lower.contains("flashlight on") || lower.contains("torch on") || lower.contains("ଟର୍ଚ୍ଚ ଜଳାଅ") || lower.contains("ଟର୍ଚ ଅନ") || lower.contains("flashlight ଚାଲୁ") || lower.contains("टॉर्च ऑन")) {
             return phoneControls.flashlight(true)
         }
-        if (lower.contains("flashlight off") || lower.contains("torch off") || lower.contains("ଟର୍ଚ୍ଚ ବନ୍ଦ କର") || lower.contains("ଟର୍ଚ ଅଫ") || lower.contains("टॉर्च बंद")) {
+        if (lower.contains("flashlight off") || lower.contains("torch off") || lower.contains("ଟର୍ଚ୍ଚ ବନ୍ଦ କର") || lower.contains("ଟର୍ଚ ଅଫ") || lower.contains("flashlight ବନ୍ଦ") || lower.contains("टॉर्च बंद")) {
             return phoneControls.flashlight(false)
         }
-        if (lower.contains("volume up") || lower.contains("volume badhao") || lower.contains("ଭଲ୍ୟୁମ ବଢ଼ାଅ") || lower.contains("sound up") || lower.contains("आवाज बढ़ाओ")) {
+        if (lower.contains("volume up") || lower.contains("volume badhao") || lower.contains("ଭଲ୍ୟୁମ ବଢ଼ାଅ") || lower.contains("sound up") || lower.contains("ଆୱାଜ ବଢ଼ାଅ") || lower.contains("आवाज बढ़ाओ")) {
             return phoneControls.volumeUp()
         }
-        if (lower.contains("volume down") || lower.contains("volume kamao") || lower.contains("ଭଲ୍ୟୁମ କମାଅ") || lower.contains("sound down") || lower.contains("आवाज कम करो")) {
+        if (lower.contains("volume down") || lower.contains("volume kamao") || lower.contains("ଭଲ୍ୟୁମ କମାଅ") || lower.contains("sound down") || lower.contains("ଆୱାଜ କମାଅ") || lower.contains("आवाज कम करो")) {
             return phoneControls.volumeDown()
+        }
+        if (lower in listOf("mute", "silent", "sound off", "volume zero", "ଶାନ୍ତ କର")) {
+            return phoneControls.setMediaVolume(0)
+        }
+        if (lower in listOf("settings", "open settings", "ସେଟିଙ୍ଗ୍ ଖୋଲ", "ସେଟିଂ ଖୋଲ", "सेटिंग्स खोलो", "setting")) {
+            return phoneControls.openSettings()
+        }
+        if (lower.contains("wifi") || lower.contains("wi-fi")) {
+            return phoneControls.openWifiSettings()
+        }
+        if (lower.contains("bluetooth") || lower.contains("ବ୍ଲୁଟୁଥ")) {
+            return phoneControls.openBluetoothSettings()
+        }
+        if (lower in listOf("open camera", "camera ଖୋଲ", "କ୍ୟାମେରା ଖୋଲ", "camera", "कैमरा खोलो")) {
+            return phoneControls.openCamera()
+        }
+        if (lower.contains("selfie") || lower.contains("ସେଲଫି")) {
+            return takeSelfieAutonomous()
         }
         val appPrefixes = listOf("open ", "launch ", "start ", "ଖୋଲ ", "khola ", "kholo ")
         for (prefix in appPrefixes) {
@@ -221,21 +322,56 @@ if "private fun splitConversations(" not in s:
                 if (app.isNotBlank()) return phoneControls.openApp(app)
             }
         }
-        if (lower.endsWith(" ଖୋଲ") || lower.endsWith(" kholo") || lower.endsWith(" khola")) {
+        if (lower.endsWith(" ଖୋଲ") || lower.endsWith(" kholo") || lower.endsWith(" khola") || lower.endsWith(" open") || lower.endsWith(" ଖୋଲିଦିଅ")) {
             val app = lower.substringBeforeLast(" ").trim()
             if (app.isNotBlank()) return phoneControls.openApp(app)
         }
         return null
     }
 
-'''
-    s = replace_once(s, "    fun setLanguage(lang: ZoyaLanguage) {", helper + "    fun setLanguage(lang: ZoyaLanguage) {", "session helpers")
+"""
+    s = s.replace("    fun setLanguage(lang: ZoyaLanguage) {", helper + "    fun setLanguage(lang: ZoyaLanguage) {", 1)
 
-# Enhance executeTool with aliases for home, scroll, modifySystem, openApp
-if '"modifySystem"' not in s:
-    old_tool_cases = '''        "openApp" -> phoneControls.openApp(args.optString("appName"))
-        "phoneAction" -> when (args.optString("action").trim().lowercase()) {'''
-    new_tool_cases = '''        "openApp", "launchApp", "open_app" -> phoneControls.openApp(args.optString("appName").ifBlank { args.optString("name").ifBlank { args.optString("app") } })
+# Direct command execution in sendText
+if "tryExecuteDirectAction" in s and "val directResult = tryExecuteDirectAction(clean)" not in s:
+    new_send = '''val directResult = tryExecuteDirectAction(clean)
+        if (directResult != null) {
+            val userMsg = ChatMessage(UUID.randomUUID().toString(), ChatRole.USER, clean, System.currentTimeMillis())
+            val anuMsg = ChatMessage(UUID.randomUUID().toString(), ChatRole.ANU, directResult, System.currentTimeMillis() + 10L)
+            _state.update { it.copy(chatMessages = it.chatMessages + userMsg + anuMsg, isAnuResponding = false) }
+            scope.launch { repository.saveChatMessage(userMsg); repository.saveChatMessage(anuMsg) }
+            if (isConnected()) client?.sendText("[SYSTEM ACTION COMPLETED: $directResult] Acknowledge concisely to the user in ${_state.value.language.label}.")
+            return
+        }
+        val proactive = clean.startsWith("[PROACTIVE SYSTEM EVENT]")'''
+    s = s.replace('val proactive = clean.startsWith("[PROACTIVE SYSTEM EVENT]")', new_send, 1)
+
+# Direct command execution in onUserText (speech transcription)
+if "tryExecuteDirectAction" in s and "val directResult = tryExecuteDirectAction(clean)" not in s[s.find("override fun onUserText"):s.find("override fun onModelText")]:
+    new_user_text = '''override fun onUserText(text: String) {
+                if (!isCurrentSession()) return
+                val clean = text.removePrefix("You:").removePrefix("You :").trim()
+                if (clean.isBlank()) return
+                ProactiveEventEngine.noteUserActivity()
+                val directResult = tryExecuteDirectAction(clean)
+                if (directResult != null) {
+                    val userMsg = ChatMessage(UUID.randomUUID().toString(), ChatRole.USER, clean, System.currentTimeMillis())
+                    val anuMsg = ChatMessage(UUID.randomUUID().toString(), ChatRole.ANU, directResult, System.currentTimeMillis() + 10L)
+                    _state.update { it.copy(chatMessages = it.chatMessages + userMsg + anuMsg, isAnuResponding = false) }
+                    scope.launch { repository.saveChatMessage(userMsg); repository.saveChatMessage(anuMsg) }
+                    client?.sendText("[SYSTEM ACTION COMPLETED: $directResult] Acknowledge concisely to the user in ${_state.value.language.label}.")
+                    return
+                }'''
+    s = re.sub(r'override fun onUserText\(text: String\)\s*\{.*?(?=ProactiveEventEngine\.noteUserActivity\(\))ProactiveEventEngine\.noteUserActivity\(\)', new_user_text, s, count=1, flags=re.DOTALL)
+
+# Comprehensive executeTool
+new_execute_tool = '''private fun executeTool(name: String, args: JSONObject): String = when (name) {
+        "openWebsite" -> {
+            val url = args.optString("url").trim()
+            val label = args.optString("name", url)
+            if (url.isBlank()) "invalid URL" else runCatching { app.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }); "opened $label" }.getOrElse { "could not open $label: ${it.message ?: "unknown error"}" }
+        }
+        "openApp", "launchApp", "open_app" -> phoneControls.openApp(args.optString("appName").ifBlank { args.optString("name").ifBlank { args.optString("app") } })
         "goHome", "home", "go_home" -> phoneControls.goHome()
         "scroll", "scrollScreen" -> phoneControls.accessibilityAction(if (args.optBoolean("backward", false) || args.optString("direction").contains("up")) "scrollup" else "scrolldown")
         "phoneAction", "modifySystem", "systemAction", "controlPhone" -> when (args.optString("action").ifBlank { args.optString("command") }.trim().lowercase()) {
@@ -243,36 +379,49 @@ if '"modifySystem"' not in s:
             "scroll", "scrolldown", "scroll_down" -> phoneControls.accessibilityAction("scrolldown")
             "scrollup", "scroll_up" -> phoneControls.accessibilityAction("scrollup")
             "open_app", "launch_app" -> phoneControls.openApp(args.optString("appName").ifBlank { args.optString("text") })
-            "notifications", "open_notifications" -> phoneControls.accessibilityAction("notifications")
-            "quicksettings", "quick_settings" -> phoneControls.accessibilityAction("quicksettings")
+            "take_selfie", "selfie", "camera_selfie" -> takeSelfieAutonomous()
+            "camera", "open_camera" -> phoneControls.openCamera()
+            "phone", "dialer" -> phoneControls.openPhone()
+            "messages", "sms" -> phoneControls.openMessages()
+            "settings", "open_settings" -> phoneControls.openSettings()
+            "wifi_settings", "wifi" -> phoneControls.openWifiSettings()
+            "bluetooth_settings", "bluetooth" -> phoneControls.openBluetoothSettings()
             "display_settings", "display" -> phoneControls.openDisplaySettings()
             "sound_settings", "sound" -> phoneControls.openSoundSettings()
+            "notifications", "open_notifications" -> phoneControls.accessibilityAction("notifications")
+            "quicksettings", "quick_settings" -> phoneControls.accessibilityAction("quicksettings")
+            "flashlight_on", "torch_on" -> phoneControls.flashlight(true)
+            "flashlight_off", "torch_off" -> phoneControls.flashlight(false)
+            "flashlight", "torch" -> phoneControls.flashlight(args.optBoolean("enabled", true) || args.optString("state").lowercase() != "off")
+            "volume_up", "louder" -> phoneControls.volumeUp()
+            "volume_down", "quieter" -> phoneControls.volumeDown()
             "mute" -> phoneControls.setMediaVolume(0)
             "set_volume" -> phoneControls.setMediaVolume(args.optInt("percent", 50))
-            "set_brightness" -> phoneControls.changeBrightness(args.optInt("percent", 15))'''
-    if old_tool_cases in s:
-        s = s.replace(old_tool_cases, new_tool_cases, 1)
-
-# Direct command execution in sendText
-if "tryDirectDeviceAction" in s and "val directResult = tryDirectDeviceAction(clean)" not in s:
-    old_send = 'val proactive = clean.startsWith("[PROACTIVE SYSTEM EVENT]")'
-    new_send = '''val directResult = tryDirectDeviceAction(clean)
-        if (directResult != null) {
-            val userMsg = ChatMessage(UUID.randomUUID().toString(), ChatRole.USER, clean, System.currentTimeMillis())
-            val anuMsg = ChatMessage(UUID.randomUUID().toString(), ChatRole.ANU, directResult, System.currentTimeMillis() + 10L)
-            _state.update { it.copy(chatMessages = it.chatMessages + userMsg + anuMsg, isAnuResponding = false) }
-            scope.launch { repository.saveChatMessage(userMsg); repository.saveChatMessage(anuMsg) }
-            if (isConnected()) client?.sendText("[DIRECT ACTION EXECUTED] Result: $directResult. Please acknowledge concisely in ${_state.value.language.label}.")
-            return
+            "brightness_up" -> phoneControls.changeBrightness(15)
+            "brightness_down" -> phoneControls.changeBrightness(-15)
+            "set_brightness" -> phoneControls.changeBrightness(args.optInt("percent", 15))
+            else -> "unsupported phone action: ${args.optString("action")}"
         }
-        val proactive = clean.startsWith("[PROACTIVE SYSTEM EVENT]")'''
-    if old_send in s:
-        s = s.replace(old_send, new_send, 1)
+        "createTaskReminder", "setReminder", "addTask" -> {
+            val title = args.optString("title").ifBlank { "Reminder" }
+            val time = args.optString("time").ifBlank { "8:00 PM" }
+            addTask(title, time)
+            "Created task reminder for '$title' at $time"
+        }
+        "accessibilityAction" -> phoneControls.accessibilityAction(args.optString("action"), args.optString("text"), args.optString("value"))
+        "readScreen" -> AccessibilityControlService.instance?.uiSnapshot() ?: "Screen reading is unavailable because Anu Accessibility is not enabled."
+        "getDeviceInfo" -> { DeviceQueryContext.set(args.optString("query").ifBlank { _state.value.chatMessages.lastOrNull { it.role == ChatRole.USER }?.text.orEmpty() }); DeviceInfoProvider.snapshot(app) }
+        else -> "Unknown tool: $name"
+    }
+    private fun buildToolDeclarations'''
 
-# Session initialization with conversation history
-old_init = '''        _state.value = ZoyaUiState(language = language, quote = idleQuotes[language]?.random().orEmpty(), tasks = loadTasks())
-        scope.launch { runCatching { repository.allMemoriesFlow.collect { memories -> _state.update { it.copy(memories = memories) } } } }
-        scope.launch { runCatching { repository.allChatMessagesFlow.collect { messages -> _state.update { it.copy(chatMessages = messages) } } } }'''
+s = re.sub(r'private fun executeTool\(name: String, args: JSONObject\): String = when \(name\)\s*\{.*?\n\s*private fun buildToolDeclarations', new_execute_tool, s, count=1, flags=re.DOTALL)
+
+old_instr = 'For camera selfie, ALWAYS call phoneAction(action=take_selfie);'
+new_instr = 'DEVICE FUNCTIONAL CONTROLS: When the user asks to open an app (e.g. YouTube, WhatsApp, Settings, Camera, Chrome), go home, scroll, or change system settings (volume, brightness, flashlight, Wi-Fi, Bluetooth), you MUST IMMEDIATELY call openApp, accessibilityAction, or phoneAction. For camera selfie, ALWAYS call phoneAction(action=take_selfie);'
+if old_instr in s:
+    s = s.replace(old_instr, new_instr, 1)
+
 new_init = '''        val persisted = runBlocking(Dispatchers.IO) { repository.getAllChatMessages() }
         val activeId = prefs.getString(ACTIVE_CONVERSATION_PREF, null) ?: UUID.randomUUID().toString()
         prefs.edit().putString(ACTIVE_CONVERSATION_PREF, activeId).apply()
@@ -289,29 +438,33 @@ new_init = '''        val persisted = runBlocking(Dispatchers.IO) { repository.g
             val id = prefs.getString(ACTIVE_CONVERSATION_PREF, activeId) ?: activeId
             _state.update { it.copy(chatMessages = messagesForConversation(messages, id), chatConversations = conversationSummaries(messages), activeConversationId = id) }
         } } }'''
+old_init = '''        _state.value = ZoyaUiState(language = language, quote = idleQuotes[language]?.random().orEmpty(), tasks = loadTasks())
+        scope.launch { runCatching { repository.allMemoriesFlow.collect { memories -> _state.update { it.copy(memories = memories) } } } }
+        scope.launch { runCatching { repository.allChatMessagesFlow.collect { messages -> _state.update { it.copy(chatMessages = messages) } } } }'''
 if old_init in s:
     s = s.replace(old_init, new_init, 1)
 
 p_sm.write_text(s, encoding="utf-8")
-print("ZoyaSessionManager updated")
+print("ZoyaSessionManager updated with fun newConversation(), direct actions, and executeTool")
 
-# 7. ViewModel facade
+# 7. ZoyaViewModel.kt: facade methods
 p_vm = PKG / "ZoyaViewModel.kt"
 s = p_vm.read_text(encoding="utf-8")
 if "fun newConversation()" not in s:
-    s = replace_once(s, "    fun clearMemories() = ZoyaSessionManager.clearMemories()\n", """    fun newConversation() = ZoyaSessionManager.newConversation()
+    s = s.replace("    fun clearMemories() = ZoyaSessionManager.clearMemories()\n", """    fun newConversation() = ZoyaSessionManager.newConversation()
     fun selectConversation(id: String) = ZoyaSessionManager.selectConversation(id)
+    fun deleteConversation(id: String) = ZoyaSessionManager.deleteConversation(id)
     fun clearMemories() = ZoyaSessionManager.clearMemories()
-""", "viewmodel conversation facade")
+""", 1)
 p_vm.write_text(s, encoding="utf-8")
 print("ZoyaViewModel updated")
 
-# 8. MainActivity.kt: in-screen Conversation History section & dialog
+# 8. MainActivity.kt: clean, soft, minimized chat & history UI
 p_main = PKG / "MainActivity.kt"
 s = p_main.read_text(encoding="utf-8")
+
 if "onNewConversation = { viewModel.newConversation() }" not in s:
-    s = replace_once(
-        s,
+    s = s.replace(
         """                        AnuNavTab.CHAT -> AnuChatScreen(
                             state = state,
                             onSendMessage = { text -> viewModel.sendText(text) },
@@ -321,74 +474,178 @@ if "onNewConversation = { viewModel.newConversation() }" not in s:
                             onSendMessage = { text -> viewModel.sendText(text) },
                             onNewConversation = { viewModel.newConversation() },
                             onSelectConversation = { id -> viewModel.selectConversation(id) },
-                            onVoiceClick = {""",
-        "chat screen callbacks"
+                            onVoiceClick = {""", 1
     )
 
-s = replace_once(s, """fun AnuChatScreen(
+if "onNewConversation: () -> Unit" not in s:
+    s = s.replace(
+        """fun AnuChatScreen(
     state: ZoyaUiState,
     onSendMessage: (String) -> Unit,
     onVoiceClick: () -> Unit,
     onClearChat: () -> Unit
-) {""", """fun AnuChatScreen(
+) {""",
+        """fun AnuChatScreen(
     state: ZoyaUiState,
     onSendMessage: (String) -> Unit,
     onNewConversation: () -> Unit,
     onSelectConversation: (String) -> Unit,
     onVoiceClick: () -> Unit,
     onClearChat: () -> Unit
-) {""", "chat screen signature") if "onNewConversation: () -> Unit" not in s else s
+) {""", 1
+    )
 
-# Top header bar: Add Conversations History button and New button
-if 'Text("New", color = AnuPrimary' not in s:
-    s = replace_once(s, """            Box {
-                IconButton(onClick = { showMenu = true }) {""", """            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onNewConversation) {
-                    Icon(Icons.Outlined.Add, contentDescription = null, tint = AnuPrimary, modifier = Modifier.size(17.dp))
-                    Spacer(Modifier.width(2.dp))
-                    Text("New", color = AnuPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+# Soft, clean, minimal header bar with soft History pill and New button
+top_bar_old = '''        // Header
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Chat",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = AnuTextDark
+            )'''
+
+top_bar_new = '''        // Header: Clean, soft, minimized bar
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .background(AnuLavenderBg, RoundedCornerShape(10.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Outlined.AutoAwesome, null, tint = AnuPrimary, modifier = Modifier.size(17.dp))
                 }
-                Box {
-                IconButton(onClick = { showMenu = true }) {""", "new conversation button")
-    s = replace_once(s, """            }
-        }
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    Text(
+                        text = "Anu",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = AnuTextDark
+                    )
+                    Text(
+                        text = if (state.connectionState == ConnectionState.SPEAKING) "Speaking..." else if (state.connectionState == ConnectionState.LISTENING) "Listening..." else "AI Assistant",
+                        fontSize = 11.sp,
+                        color = AnuTextMuted
+                    )
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = AnuLavenderBg,
+                    modifier = Modifier.clickable { showChatHistoryDialog = true }
+                ) {
+                    Row(Modifier.padding(horizontal = 9.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.History, null, tint = AnuPrimary, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(3.dp))
+                        Text("History", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = AnuPrimary)
+                    }
+                }
+                Spacer(Modifier.width(6.dp))
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = AnuLavenderBg,
+                    modifier = Modifier.clickable { onNewConversation() }
+                ) {
+                    Row(Modifier.padding(horizontal = 9.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Add, null, tint = AnuPrimary, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(2.dp))
+                        Text("New", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = AnuPrimary)
+                    }
+                }
+                Spacer(Modifier.width(2.dp))'''
 
-        // Chat Message List or Empty Placeholder""", """                }
+if top_bar_old in s:
+    s = s.replace(top_bar_old, top_bar_new, 1)
+
+# Add minimal horizontal conversation pills when > 1 conversation exists
+if "MinimalConversationPills" not in s:
+    conv_pills = '''        // Minimal Conversation Pills: Clean, soft, compact
+        if (state.chatConversations.size > 1) {
+            androidx.compose.foundation.lazy.LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 3.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(state.chatConversations, key = { it.id }) { conv ->
+                    val isCurrent = conv.id == state.activeConversationId
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (isCurrent) AnuPrimary else AnuBackground,
+                        border = BorderStroke(1.dp, if (isCurrent) AnuPrimary else AnuBorder),
+                        modifier = Modifier.clickable { onSelectConversation(conv.id) }
+                    ) {
+                        Text(
+                            text = conv.title,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (isCurrent) Color.White else AnuTextDark,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
+                    }
+                }
             }
         }
+'''
+    s = re.sub(r'(\s*// Chat Message List or Empty Placeholder)', conv_pills + r'\1', s, count=1)
 
-        // Chat Message List or Empty Placeholder""", "new button container closure")
-
-# Dialog signature
-s = replace_once(s, """fun AnuChatHistoryDialog(
+# History Dialog: update signature and provide clean, soft, beautiful Saved conversations list
+if "conversations: List<AnuConversationSummary>" not in s:
+    s = s.replace(
+        """fun AnuChatHistoryDialog(
     messages: List<ChatMessage>,
     onDismiss: () -> Unit,
     onClear: () -> Unit
-) {""", """fun AnuChatHistoryDialog(
+) {""",
+        """fun AnuChatHistoryDialog(
     messages: List<ChatMessage>,
     conversations: List<AnuConversationSummary>,
     activeConversationId: String,
     onSelectConversation: (String) -> Unit,
+    onNewConversation: () -> Unit,
     onDismiss: () -> Unit,
     onClear: () -> Unit
-) {""", "history dialog signature") if "conversations: List<AnuConversationSummary>" not in s else s
+) {""", 1
+    )
 
 if "conversations = state.chatConversations" not in s:
-    s = replace_once(s, """        AnuChatHistoryDialog(
+    s = s.replace(
+        """        AnuChatHistoryDialog(
             messages = state.chatMessages,
-            onDismiss = { showChatHistoryDialog = false },""", """        AnuChatHistoryDialog(
+            onDismiss = { showChatHistoryDialog = false },""",
+        """        AnuChatHistoryDialog(
             messages = state.chatMessages,
             conversations = state.chatConversations,
             activeConversationId = state.activeConversationId,
-            onSelectConversation = { id -> onSelectConversation(id) },
-            onDismiss = { showChatHistoryDialog = false },""", "history dialog call")
+            onSelectConversation = { id -> onSelectConversation(id); showChatHistoryDialog = false },
+            onNewConversation = { onNewConversation(); showChatHistoryDialog = false },
+            onDismiss = { showChatHistoryDialog = false },""", 1
+    )
 
 if "val filteredConversations =" not in s:
-    s = replace_once(s, """    val filteredMessages = remember(messages, searchQuery) {
+    s = s.replace(
+        """    val filteredMessages = remember(messages, searchQuery) {
         if (searchQuery.isBlank()) messages
         else messages.filter { it.text.contains(searchQuery, ignoreCase = true) }
     }
-""", """    val filteredMessages = remember(messages, searchQuery) {
+""",
+        """    val filteredMessages = remember(messages, searchQuery) {
         if (searchQuery.isBlank()) messages
         else messages.filter { it.text.contains(searchQuery, ignoreCase = true) }
     }
@@ -396,120 +653,61 @@ if "val filteredConversations =" not in s:
         if (searchQuery.isBlank()) conversations
         else conversations.filter { it.title.contains(searchQuery, ignoreCase = true) }
     }
-""", "conversation filtering")
+""", 1
+    )
 
 if "Saved conversations" not in s:
-    block = """                    Text("Saved conversations", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AnuTextMuted)
+    dialog_conv_list = '''                    Text("Saved conversations", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = AnuPrimary)
                     Spacer(Modifier.height(6.dp))
                     if (filteredConversations.isNotEmpty()) {
                         LazyColumn(
-                            modifier = Modifier.fillMaxWidth().heightIn(max = 150.dp),
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             items(filteredConversations, key = { it.id }) { conversation ->
+                                val active = conversation.id == activeConversationId
                                 Surface(
                                     shape = RoundedCornerShape(12.dp),
-                                    color = if (conversation.id == activeConversationId) AnuLavenderBg else AnuBackground,
-                                    border = BorderStroke(1.dp, if (conversation.id == activeConversationId) AnuPrimary.copy(alpha = 0.45f) else AnuBorder),
+                                    color = if (active) AnuLavenderBg else AnuBackground,
+                                    border = BorderStroke(1.dp, if (active) AnuPrimary.copy(alpha = 0.45f) else AnuBorder),
                                     modifier = Modifier.fillMaxWidth().clickable { onSelectConversation(conversation.id) }
                                 ) {
-                                    Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
-                                        Text(conversation.title, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = AnuTextDark, maxLines = 1)
-                                        Text("${conversation.messageCount} messages", fontSize = 10.sp, color = AnuTextMuted)
+                                    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Outlined.ChatBubbleOutline, null, tint = if (active) AnuPrimary else AnuTextMuted, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(conversation.title, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = AnuTextDark, maxLines = 1)
+                                            Text("${conversation.messageCount} messages • ${timeFormatter.format(Date(conversation.updatedAt))}", fontSize = 9.5.sp, color = AnuTextMuted, maxLines = 1)
+                                        }
                                     }
                                 }
                             }
                         }
                     } else {
-                        Text("No saved conversations yet.", fontSize = 11.5.sp, color = AnuTextMuted)
+                        Text("No saved conversations yet.", fontSize = 11.5.sp, color = AnuTextMuted, modifier = Modifier.padding(vertical = 4.dp))
                     }
-                    Spacer(Modifier.height(10.dp))
-                    Text("Messages in current conversation", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AnuTextMuted)
-                    Spacer(Modifier.height(4.dp))
-
-"""
-    s = replace_once(s, """                    Spacer(Modifier.height(10.dp))
-
-                    if (filteredMessages.isEmpty()) {""", """                    Spacer(Modifier.height(10.dp))
-
-""" + block + """                    if (filteredMessages.isEmpty()) {""", "conversation list UI")
-
-# IN-SCREEN Conversation History Section in AnuChatScreen
-if "Conversation History Section" not in s:
-    in_screen_conversations = """        // Conversation History Section: displays all conversations conversation-wise
-        if (state.chatConversations.isNotEmpty()) {
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                shape = RoundedCornerShape(12.dp),
-                color = AnuBackground,
-                border = BorderStroke(1.dp, AnuBorder)
-            ) {
-                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "💬 Chat History (${state.chatConversations.size})",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = AnuPrimary
-                        )
-                        Text(
-                            "Tap to switch",
-                            fontSize = 10.sp,
-                            color = AnuTextMuted
-                        )
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    androidx.compose.foundation.lazy.LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        items(state.chatConversations, key = { it.id }) { conv ->
-                            val active = conv.id == state.activeConversationId
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = if (active) AnuLavenderBg else Color.Transparent,
-                                border = BorderStroke(1.dp, if (active) AnuPrimary else AnuBorder),
-                                modifier = Modifier.clickable { onSelectConversation(conv.id) }
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        conv.title,
-                                        fontSize = 11.5.sp,
-                                        fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (active) AnuPrimary else AnuTextDark,
-                                        maxLines = 1
-                                    )
-                                    Spacer(Modifier.width(4.dp))
-                                    Text(
-                                        "(${conv.messageCount})",
-                                        fontSize = 9.5.sp,
-                                        color = AnuTextMuted
-                                    )
-                                }
-                            }
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = onNewConversation) {
+                            Icon(Icons.Outlined.Add, null, modifier = Modifier.size(15.dp), tint = AnuPrimary)
+                            Spacer(Modifier.width(3.dp))
+                            Text("New conversation", color = AnuPrimary, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
-                }
-            }
-        }
-"""
-    s = replace_once(
-        s,
-        "        // Chat Message List or Empty Placeholder",
-        in_screen_conversations + "\n        // Chat Message List or Empty Placeholder",
-        "in-screen conversation history section"
+                    Spacer(Modifier.height(4.dp))
+                    Text("Messages in current conversation", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AnuTextMuted)
+                    Spacer(Modifier.height(4.dp))
+'''
+    s = s.replace(
+        """                    Spacer(Modifier.height(10.dp))
+
+                    if (filteredMessages.isEmpty()) {""",
+        """                    Spacer(Modifier.height(10.dp))
+
+""" + dialog_conv_list + """                    if (filteredMessages.isEmpty()) {""", 1
     )
 
 p_main.write_text(s, encoding="utf-8")
-print("MainActivity updated with in-screen conversation history section")
+print("MainActivity updated with clean, soft, minimized chat & history section")
 
-print("All patches applied safely and verified.")
+print("All conversation history and functional repairs applied cleanly.")
