@@ -6,7 +6,15 @@ PKG = ROOT / "app/src/main/java/com/ghaniram/zoya"
 models = PKG / "Models.kt"
 s = models.read_text(encoding="utf-8")
 if "data class AnuConversationSummary" not in s:
-    s = s.replace("enum class ChatRole { USER, ANU, SYSTEM }\n", """enum class ChatRole { USER, ANU, SYSTEM }\n\ndata class AnuConversationSummary(\n    val id: String,\n    val title: String,\n    val messageCount: Int,\n    val updatedAt: Long\n)\n""", 1)
+    s = s.replace("enum class ChatRole { USER, ANU, SYSTEM }\n", """enum class ChatRole { USER, ANU, SYSTEM }
+
+data class AnuConversationSummary(
+    val id: String,
+    val title: String,
+    val messageCount: Int,
+    val updatedAt: Long
+)
+""", 1)
 if "val chatConversations: List<AnuConversationSummary>" not in s:
     s = s.replace("    val chatMessages: List<ChatMessage> = emptyList(),\n", "    val chatMessages: List<ChatMessage> = emptyList(),\n    val chatConversations: List<AnuConversationSummary> = emptyList(),\n    val activeConversationId: String = \"\",\n", 1)
 models.write_text(s, encoding="utf-8")
@@ -14,11 +22,7 @@ models.write_text(s, encoding="utf-8")
 session = PKG / "ZoyaSessionManager.kt"
 s = session.read_text(encoding="utf-8")
 if "CONVERSATION_MARKER" not in s:
-    s = s.replace(
-        "    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())\n",
-        "    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())\n    private const val CONVERSATION_MARKER = \"__ANU_CONVERSATION__\"\n    private const val ACTIVE_CONVERSATION_PREF = \"active_conversation_id\"\n",
-        1,
-    )
+    s = s.replace("    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())\n", "    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())\n    private const val CONVERSATION_MARKER = \"__ANU_CONVERSATION__\"\n    private const val ACTIVE_CONVERSATION_PREF = \"active_conversation_id\"\n", 1)
 if "private fun splitConversations(" not in s:
     helper = r'''    private fun conversationMarker(id: String, title: String, time: Long = System.currentTimeMillis()) =
         ChatMessage(UUID.randomUUID().toString(), ChatRole.SYSTEM, "$CONVERSATION_MARKER|$id|$title", time)
@@ -129,26 +133,22 @@ vm.write_text(s, encoding="utf-8")
 main = PKG / "MainActivity.kt"
 s = main.read_text(encoding="utf-8")
 if "onNewConversation = { viewModel.newConversation() }" not in s:
-    s = s.replace(
-        """                        AnuNavTab.CHAT -> AnuChatScreen(
+    s = s.replace("""                        AnuNavTab.CHAT -> AnuChatScreen(
                             state = state,
                             onSendMessage = { text -> viewModel.sendText(text) },
-                            onVoiceClick = {""",
-        """                        AnuNavTab.CHAT -> AnuChatScreen(
+                            onVoiceClick = {""", """                        AnuNavTab.CHAT -> AnuChatScreen(
                             state = state,
                             onSendMessage = { text -> viewModel.sendText(text) },
                             onNewConversation = { viewModel.newConversation() },
                             onSelectConversation = { viewModel.selectConversation(it) },
                             onVoiceClick = {""", 1)
 if "onNewConversation: () -> Unit" not in s[s.find("fun AnuChatScreen("):s.find("fun AnuChatScreen(")+500]:
-    s = s.replace(
-        """fun AnuChatScreen(
+    s = s.replace("""fun AnuChatScreen(
     state: ZoyaUiState,
     onSendMessage: (String) -> Unit,
     onVoiceClick: () -> Unit,
     onClearChat: () -> Unit
-) {""",
-        """fun AnuChatScreen(
+) {""", """fun AnuChatScreen(
     state: ZoyaUiState,
     onSendMessage: (String) -> Unit,
     onNewConversation: () -> Unit,
@@ -157,18 +157,15 @@ if "onNewConversation: () -> Unit" not in s[s.find("fun AnuChatScreen("):s.find(
     onClearChat: () -> Unit
 ) {""", 1)
 if "conversations = state.chatConversations" not in s:
-    s = s.replace(
-        """        AnuChatHistoryDialog(
+    s = s.replace("""        AnuChatHistoryDialog(
             messages = state.chatMessages,
-            onDismiss = { showChatHistoryDialog = false },""",
-        """        AnuChatHistoryDialog(
+            onDismiss = { showChatHistoryDialog = false },""", """        AnuChatHistoryDialog(
             messages = state.chatMessages,
             conversations = state.chatConversations,
             activeConversationId = state.activeConversationId,
             onSelectConversation = { onSelectConversation(it) },
             onNewConversation = { onNewConversation(); showChatHistoryDialog = false },
             onDismiss = { showChatHistoryDialog = false },""", 1)
-# Header: add New button before the existing menu.
 if 'Text("New", color = AnuPrimary' not in s:
     s=s.replace("""            Box {
                 IconButton(onClick = { showMenu = true }) {""", """            Row(verticalAlignment = Alignment.CenterVertically) {
@@ -189,7 +186,6 @@ if 'Text("New", color = AnuPrimary' not in s:
         }
 
         // Chat Message List or Empty Placeholder""", 1)
-# Dialog signature and conversation list.
 s=s.replace("""fun AnuChatHistoryDialog(
     messages: List<ChatMessage>,
     onDismiss: () -> Unit,
@@ -223,12 +219,7 @@ if 'Text("Conversations", fontSize = 12.sp' not in s:
                     } else {
                         LazyColumn(Modifier.fillMaxWidth().heightIn(max = 180.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             items(filteredConversations, key = { it.id }) { conversation ->
-                                Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = if (conversation.id == activeConversationId) AnuLavenderBg else AnuBackground,
-                                    border = BorderStroke(1.dp, if (conversation.id == activeConversationId) AnuPrimary.copy(alpha = 0.45f) else AnuBorder),
-                                    modifier = Modifier.fillMaxWidth().clickable { onSelectConversation(conversation.id) }
-                                ) {
+                                Surface(shape = RoundedCornerShape(12.dp), color = if (conversation.id == activeConversationId) AnuLavenderBg else AnuBackground, border = BorderStroke(1.dp, if (conversation.id == activeConversationId) AnuPrimary.copy(alpha = 0.45f) else AnuBorder), modifier = Modifier.fillMaxWidth().clickable { onSelectConversation(conversation.id) }) {
                                     Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                         Icon(Icons.Outlined.ChatBubbleOutline, null, tint = AnuPrimary, modifier = Modifier.size(16.dp))
                                         Spacer(Modifier.width(8.dp))
@@ -257,6 +248,8 @@ if 'Text("Conversations", fontSize = 12.sp' not in s:
                     if (filteredMessages.isEmpty()) {""", """                    Spacer(Modifier.height(10.dp))
 
 """+insert+"""                    if (filteredMessages.isEmpty()) {""", 1)
+# Compiler reported EOF at line 3098: add the missing final Kotlin brace to the generated file.
+s = s.rstrip() + "\n}"
 main.write_text(s, encoding="utf-8")
 
-print("Conversation-wise chat history applied")
+print("Conversation-wise chat history applied and MainActivity brace repaired")
