@@ -1,2 +1,2 @@
-Anu floating companion build verification trigger
-Fix: Handler animation scheduling compatibility
+Anu mobile functional repair + conversation-wise chat history build verification
+Fix: verify the actual Anu repository build after chat/history and mobile-function repairs
