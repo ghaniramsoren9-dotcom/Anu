@@ -170,7 +170,7 @@ fun AnuChatHistoryDialog(
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(18.dp),
-                        color = LocalAnuColors.current.surface,
+                        color = LocalAnuColors.current.cardBackground,
                         border = BorderStroke(1.dp, Color(0xFFD9D1F7))
                     ) {
                         Row(
@@ -244,7 +244,7 @@ fun AnuChatHistoryDialog(
                                         .clip(RoundedCornerShape(18.dp))
                                         .clickable { onSelectConversation(conversation.id) },
                                     shape = RoundedCornerShape(18.dp),
-                                    color = LocalAnuColors.current.surface,
+                                    color = LocalAnuColors.current.cardBackground,
                                     border = BorderStroke(1.dp, Color(0xFFE1DCF2)),
                                     shadowElevation = 1.dp
                                 ) {

@@ -672,13 +672,12 @@ if "conversations: List<AnuConversationSummary>" not in s:
     )
 
 if "conversations = state.chatConversations" not in s:
-    s = s.replace(
-        """        AnuChatHistoryDialog(
+    old_dialog_call = """        AnuChatHistoryDialog(
             messages = state.chatMessages,
             onDismiss = { showChatHistoryDialog = false },
             onClear = onClearChat
-        )""",
-        """        AnuChatHistoryDialog(
+        )"""
+    new_dialog_call = """        AnuChatHistoryDialog(
             messages = state.chatMessages,
             conversations = state.chatConversations,
             onSelectConversation = { id -> onSelectConversation(id); showChatHistoryDialog = false },
@@ -688,8 +687,9 @@ if "conversations = state.chatConversations" not in s:
                 onClearChat()
                 showChatHistoryDialog = false
             }
-        )""", 1
-    )
+        )"""
+    if old_dialog_call in s:
+        s = s.replace(old_dialog_call, new_dialog_call, 1)
 
 if "val filteredConversations =" not in s:
     s = s.replace(

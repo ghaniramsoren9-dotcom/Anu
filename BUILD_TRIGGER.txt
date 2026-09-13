@@ -1,7 +1,4 @@
-Anu mobile build fix:
-- Align AnuChatHistoryDialog parameters and call site between apply_conversation_history.py, apply_premium_chat_history_ui.py, and repair_compile.py
-- Fix unresolved Icons.Outlined.ChatBubble icon to Icons.Outlined.ChatBubbleOutline
-- Use valid in-scope callbacks in repair_compile.py
-- Dynamic time-based greeting on Home screen
-- Clean tone tags like <tone:warm> from Anu chat responses
-- Redesign Chat History UI matching design structure
+Anu APK build fix:
+- tools/apply_premium_chat_history_ui.py: fix LocalAnuColors.current.cardBackground and Icons.Outlined.ChatBubbleOutline
+- tools/repair_compile.py: use in-scope callbacks and robust AnuChatHistoryDialog regex replacement
+- tools/apply_conversation_history.py: align AnuChatHistoryDialog parameters and ensure dynamic greeting + tone cleanup
