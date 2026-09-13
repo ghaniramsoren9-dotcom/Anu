@@ -67,25 +67,36 @@ jobs:
           set -euo pipefail
           python3 tools/repair_compile.py
 
-      - name: Repair generated Kotlin regex escapes
+      - name: Repair invalid Kotlin backslash escapes
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           import re
+
           root = Path("app/src/main/java")
           changed = 0
+          replacements = 0
+
           for path in root.rglob("*.kt"):
               text = path.read_text(encoding="utf-8")
-              fixed = re.sub(r'Regex\("([^"]*)\\s', lambda m: 'Regex("' + m.group(1) + '[[:space:]]', text)
+              fixed = text
+
+              # Kotlin string literals do not accept regex escapes such as \s.
+              # Generated source can contain a single backslash; preserve already
+              # valid double-backslash sequences and repair only single \s.
+              fixed, count = re.subn(r"(?<!\\)\\s", r"\\\\s", fixed)
+              replacements += count
+
               if fixed != text:
                   path.write_text(fixed, encoding="utf-8")
                   changed += 1
-          print(f"Fixed invalid Kotlin regex whitespace escapes in {changed} source file(s).")
+
+          print(f"Repaired {replacements} invalid Kotlin \\s escape(s) in {changed} source file(s).")
           PY
 
-      - name: Normalize Kotlin source escapes
+      - name: Normalize Kotlin apostrophe escapes
         shell: bash
         run: |
           set -euo pipefail
@@ -95,6 +106,16 @@ jobs:
             exit 1
           fi
           echo "Kotlin source escape normalization verified."
+
+      - name: Verify no invalid Kotlin regex whitespace escapes remain
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RInP '(?<!\\)\\s' app/src/main/java --include='*.kt'; then
+            echo "ERROR: invalid single-backslash \\s escape remains in Kotlin source"
+            exit 1
+          fi
+          echo "Kotlin regex escape verification passed."
 
       - name: Verify modified source tree
         shell: bash
