@@ -71,19 +71,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # The integration script can re-introduce a Python-style escaped apostrophe
-          # into Kotlin string literals. Kotlin does not support \' as an escape.
-          # Normalize only this invalid sequence across the generated source tree.
-          find app/src/main/java -type f -name '*.kt' -print0 | while IFS= read -r -d '' file; do
-            python3 - "$file" <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1])
-s = p.read_text(encoding='utf-8')
-s2 = s.replace("\\\\'", "'")
-if s2 != s:
-    p.write_text(s2, encoding='utf-8')
-PY
-          done
+          find app/src/main/java -type f -name '*.kt' -exec perl -pi -e 's/\\\x27/\x27/g' {} +
           if grep -RInF "\\'" app/src/main/java --include='*.kt'; then
             echo "ERROR: invalid Kotlin apostrophe escape remains"
             exit 1
