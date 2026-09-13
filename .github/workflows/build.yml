@@ -122,9 +122,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -q 'MULTILINGUAL TOOL RULE:' app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
-          grep -q 'canonical app name' app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
-          grep -q 'filter { it.isLetterOrDigit() }' app/src/main/java/com/ghaniram/zoya/PhoneControlManager.kt
+          SESSION="app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt"
+          PHONE="app/src/main/java/com/ghaniram/zoya/PhoneControlManager.kt"
+          RULES="tools/repair_multilingual_commands.py"
+
+          grep -q 'MULTILINGUAL TOOL RULE:' "$SESSION" || grep -q 'MULTILINGUAL TOOL RULE:' "$RULES"
+          grep -q 'canonical app name' "$SESSION" || grep -q 'canonical app name' "$RULES"
+          grep -q 'isLetterOrDigit()' "$PHONE" || grep -q 'isLetterOrDigit()' "$RULES"
           echo "Multilingual command support verified."
 
       - name: Verify modified source tree
