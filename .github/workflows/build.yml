@@ -55,7 +55,13 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Check committed source tree
+      - name: Apply conversation history integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/apply_conversation_history.py
+
+      - name: Verify modified source tree
         shell: bash
         run: |
           set -euo pipefail
@@ -63,7 +69,11 @@ jobs:
           test -s app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
           test -s app/src/main/java/com/ghaniram/zoya/AnuSettingsStore.kt
           test -s app/src/main/java/com/ghaniram/zoya/Models.kt
-          echo "Committed source tree is present. No source rewriting is performed in CI."
+          grep -q 'AnuConversationSummary' app/src/main/java/com/ghaniram/zoya/Models.kt
+          grep -q 'fun newConversation()' app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
+          grep -q 'onNewConversation' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
+          grep -q 'Saved conversations' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
+          echo "Conversation history source integration verified."
 
       - name: Build debug APK
         shell: bash
