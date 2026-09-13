@@ -61,6 +61,12 @@ jobs:
           set -euo pipefail
           python3 tools/apply_conversation_history.py
 
+      - name: Apply premium English Chat History UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/apply_premium_chat_history_ui.py
+
       - name: Repair generated Kotlin before compile
         shell: bash
         run: |
