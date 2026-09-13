@@ -4,6 +4,11 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 PKG = ROOT / "app/src/main/java/com/ghaniram/zoya"
 
+def replace_once(text, old, new, label):
+    if old not in text:
+        raise SystemExit(f"Required source anchor not found: {label}")
+    return text.replace(old, new, 1)
+
 # 1. AndroidManifest.xml: package visibility for querying and opening apps
 p_manifest = ROOT / "app/src/main/AndroidManifest.xml"
 if p_manifest.exists():
@@ -433,7 +438,7 @@ if old_init in s:
     s = s.replace(old_init, new_init, 1)
 
 p_sm.write_text(s, encoding="utf-8")
-print("ZoyaSessionManager updated with fun newConversation(), direct actions, and executeTool")
+print("ZoyaSessionManager updated")
 
 # 7. ZoyaViewModel.kt: facade methods
 p_vm = PKG / "ZoyaViewModel.kt"
@@ -482,35 +487,21 @@ if "onNewConversation: () -> Unit" not in s:
 ) {""", 1
     )
 
-# Soft, clean, minimal header bar with balanced braces
+# Soft, clean, minimal header buttons: History button and New button
 old_box = """            Box {
                 IconButton(onClick = { showMenu = true }) {"""
 
 new_box = """            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = AnuLavenderBg,
-                    modifier = Modifier.clickable { showChatHistoryDialog = true }
-                ) {
-                    Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.History, contentDescription = null, tint = AnuPrimary, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(3.dp))
-                        Text("History", color = AnuPrimary, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                    }
+                TextButton(onClick = { showChatHistoryDialog = true }) {
+                    Icon(Icons.Outlined.History, contentDescription = null, tint = AnuPrimary, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(2.dp))
+                    Text("History", color = AnuPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
-                Spacer(Modifier.width(6.dp))
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = AnuLavenderBg,
-                    modifier = Modifier.clickable { onNewConversation() }
-                ) {
-                    Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Add, contentDescription = null, tint = AnuPrimary, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(2.dp))
-                        Text("New", color = AnuPrimary, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                    }
+                TextButton(onClick = onNewConversation) {
+                    Icon(Icons.Outlined.Add, contentDescription = null, tint = AnuPrimary, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(2.dp))
+                    Text("New", color = AnuPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
-                Spacer(Modifier.width(2.dp))
                 Box {
                 IconButton(onClick = { showMenu = true }) {"""
 
@@ -528,43 +519,6 @@ new_close = """                }
 if old_box in s:
     s = s.replace(old_box, new_box, 1)
     s = s.replace(old_close, new_close, 1)
-
-# Add minimal horizontal conversation pills when > 1 conversation exists
-if "MinimalConversationPills" not in s:
-    conv_pills = """        // Minimal Conversation Pills: Clean, soft, compact
-        if (state.chatConversations.size > 1) {
-            androidx.compose.foundation.lazy.LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 3.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                items(state.chatConversations, key = { it.id }) { conv ->
-                    val isCurrent = conv.id == state.activeConversationId
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = if (isCurrent) AnuPrimary else AnuBackground,
-                        border = BorderStroke(1.dp, if (isCurrent) AnuPrimary else AnuBorder),
-                        modifier = Modifier.clickable { onSelectConversation(conv.id) }
-                    ) {
-                        Text(
-                            text = conv.title,
-                            fontSize = 11.sp,
-                            maxLines = 1,
-                            fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (isCurrent) Color.White else AnuTextDark,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
-                    }
-                }
-            }
-        }
-"""
-    s = s.replace(
-        "        // Chat Message List or Empty Placeholder",
-        conv_pills + "\n        // Chat Message List or Empty Placeholder",
-        1
-    )
 
 # History Dialog: update signature and provide clean, soft, beautiful Saved conversations list
 if "conversations: List<AnuConversationSummary>" not in s:
@@ -618,46 +572,44 @@ if "val filteredConversations =" not in s:
     )
 
 if "Saved conversations" not in s:
-    dialog_conv_list = '''                    Text("Saved conversations", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = AnuPrimary)
+    dialog_conv_list = '''                    Text("Saved conversations", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AnuTextMuted)
                     Spacer(Modifier.height(6.dp))
                     if (filteredConversations.isNotEmpty()) {
                         LazyColumn(
-                            modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 150.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             items(filteredConversations, key = { it.id }) { conversation ->
-                                val active = conversation.id == activeConversationId
                                 Surface(
                                     shape = RoundedCornerShape(12.dp),
-                                    color = if (active) AnuLavenderBg else AnuBackground,
-                                    border = BorderStroke(1.dp, if (active) AnuPrimary.copy(alpha = 0.45f) else AnuBorder),
+                                    color = if (conversation.id == activeConversationId) AnuLavenderBg else AnuBackground,
+                                    border = BorderStroke(1.dp, if (conversation.id == activeConversationId) AnuPrimary.copy(alpha = 0.45f) else AnuBorder),
                                     modifier = Modifier.fillMaxWidth().clickable { onSelectConversation(conversation.id) }
                                 ) {
                                     Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Outlined.ChatBubbleOutline, null, tint = if (active) AnuPrimary else AnuTextMuted, modifier = Modifier.size(16.dp))
+                                        Icon(Icons.Outlined.ChatBubbleOutline, null, tint = AnuPrimary, modifier = Modifier.size(16.dp))
                                         Spacer(Modifier.width(8.dp))
                                         Column(Modifier.weight(1f)) {
                                             Text(conversation.title, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = AnuTextDark, maxLines = 1)
-                                            Text("${conversation.messageCount} messages • ${timeFormatter.format(Date(conversation.updatedAt))}", fontSize = 9.5.sp, color = AnuTextMuted, maxLines = 1)
+                                            Text("${conversation.messageCount} messages", fontSize = 9.5.sp, color = AnuTextMuted, maxLines = 1)
                                         }
                                     }
                                 }
                             }
                         }
                     } else {
-                        Text("No saved conversations yet.", fontSize = 11.5.sp, color = AnuTextMuted, modifier = Modifier.padding(vertical = 4.dp))
+                        Text("No saved conversations yet.", fontSize = 11.5.sp, color = AnuTextMuted)
                     }
                     Spacer(Modifier.height(8.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                         TextButton(onClick = onNewConversation) {
-                            Icon(Icons.Outlined.Add, null, modifier = Modifier.size(15.dp), tint = AnuPrimary)
-                            Spacer(Modifier.width(3.dp))
-                            Text("New conversation", color = AnuPrimary, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                            Icon(Icons.Outlined.Add, null, modifier = Modifier.size(16.dp), tint = AnuPrimary)
+                            Spacer(Modifier.width(4.dp))
+                            Text("New conversation", color = AnuPrimary, fontSize = 11.5.sp)
                         }
                     }
-                    Spacer(Modifier.height(4.dp))
                     Text("Messages in current conversation", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AnuTextMuted)
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(6.dp))
 '''
     s = s.replace(
         """                    Spacer(Modifier.height(10.dp))
