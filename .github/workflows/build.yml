@@ -37,33 +37,13 @@ jobs:
           test -n "$ANU_KEYSTORE_BASE64" || { echo "ERROR: ANU_KEYSTORE_BASE64 is empty"; exit 1; }
           test -n "$ANU_KEYSTORE_PASSWORD" || { echo "ERROR: ANU_KEYSTORE_PASSWORD is empty"; exit 1; }
           STORE_PASSWORD="$(printf '%s' "$ANU_KEYSTORE_PASSWORD" | tr -d '\r\n')"
-          test -n "$STORE_PASSWORD" || { echo "ERROR: normalized keystore password is empty"; exit 1; }
           printf '%s' "$ANU_KEYSTORE_BASE64" | tr -d '\r\n' | base64 --decode > anu-release.jks
           test -s anu-release.jks || { echo "ERROR: decoded keystore is empty"; exit 1; }
-          echo "Decoded keystore size: $(wc -c < anu-release.jks) bytes"
-          file anu-release.jks || true
-          set +e
-          KEYTOOL_OUTPUT="$(keytool -list -v -keystore anu-release.jks -alias anu -storepass "$STORE_PASSWORD" 2>&1)"
-          KEYTOOL_RC=$?
-          set -e
-          if [ "$KEYTOOL_RC" -ne 0 ]; then
-            echo "ERROR: GitHub keystore validation failed (keytool exit $KEYTOOL_RC)."
-            echo "The workflow will not expose the keystore password or key material."
-            echo "keytool diagnostic:"
-            printf '%s\n' "$KEYTOOL_OUTPUT" | sed -E 's/(-storepass|-keypass|password)[[:space:]]+[^[:space:]]+/\1 [REDACTED]/Ig' | head -20
-            exit 1
-          fi
+          KEYTOOL_OUTPUT="$(keytool -list -v -keystore anu-release.jks -alias anu -storepass "$STORE_PASSWORD" 2>&1)" || { echo "ERROR: keystore validation failed"; printf '%s\n' "$KEYTOOL_OUTPUT" | head -20; exit 1; }
           ACTUAL_SHA256="$(printf '%s\n' "$KEYTOOL_OUTPUT" | awk -F': ' '/SHA256:/{print $2; exit}')"
           EXPECTED_SHA256="87:7D:C9:7A:8B:30:9D:53:24:F0:F9:62:BF:0C:DE:81:0E:47:8A:32:72:53:B2:AC:33:7A:48:4C:DB:01:78:90"
-          echo "GitHub decoded keystore SHA-256: ${ACTUAL_SHA256:-NOT_FOUND}"
-          echo "Expected permanent Anu SHA-256: $EXPECTED_SHA256"
-          if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
-            echo "ERROR: GitHub secret contains a different keystore."
-            exit 1
-          fi
-          echo "Permanent Anu signing keystore validation: OK"
+          test "$ACTUAL_SHA256" = "$EXPECTED_SHA256" || { echo "ERROR: wrong Anu signing keystore"; exit 1; }
           cp anu-release.jks "$GITHUB_WORKSPACE/debug.keystore"
-          echo "Copied keystore to $GITHUB_WORKSPACE/debug.keystore"
 
       - name: Create local.properties
         shell: bash
@@ -75,24 +55,39 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Apply conversation-wise chat history repair
+      - name: Apply conversation history and Kotlin compile repair
         shell: bash
         run: |
           set -euo pipefail
           python3 tools/apply_conversation_history.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/ghaniram/zoya/MainActivity.kt')
+          s = p.read_text()
+          # Remove the unresolved implicit `it` from the bottom navigation callback.
+          s = s.replace('onTabSelected = { currentTab = it }', 'onTabSelected = { tab -> currentTab = tab }')
+          # Make the vision prompt callback type explicit for Kotlin inference.
+          s = s.replace('onSendVisionPrompt = { prompt ->\n', 'onSendVisionPrompt = { prompt: String ->\n')
+          p.write_text(s)
+          print('Applied Kotlin callback type repairs.')
+          PY
 
-      - name: Check source tree
+      - name: Verify required vision declarations
         shell: bash
         run: |
           set -euo pipefail
           test -s app/src/main/java/com/ghaniram/zoya/MainActivity.kt
+          grep -n '^fun AnuVisionTabScreen(' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
+          grep -n '^fun AnuWaveformVisualizer(' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
+          grep -q 'onTabSelected = { tab -> currentTab = tab }' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
+          grep -q 'onSendVisionPrompt = { prompt: String ->' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
           test -s app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
           test -s app/src/main/java/com/ghaniram/zoya/AnuSettingsStore.kt
           test -s app/src/main/java/com/ghaniram/zoya/Models.kt
           grep -q "AnuConversationSummary" app/src/main/java/com/ghaniram/zoya/Models.kt
           grep -q "newConversation" app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
           grep -q "Conversations" app/src/main/java/com/ghaniram/zoya/MainActivity.kt
-          echo "Conversation-wise history source repair applied successfully."
+          echo "Source checks passed."
 
       - name: Build debug APK
         shell: bash
@@ -111,7 +106,7 @@ jobs:
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print -quit)"
-          test -n "$APKSIGNER" || { echo "ERROR: apksigner not found"; exit 1; }
+          test -n "$APKSIGNER"
           "$APKSIGNER" verify --verbose "$APK"
           ls -lh "$APK"
 
@@ -126,15 +121,7 @@ jobs:
           TAG="anu-build-${{ github.run_number }}"
           REPO="${{ github.repository }}"
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; updating its APK asset."
             gh release upload "$TAG" "$APK#Anu-debug.apk" --repo "$REPO" --clobber
           else
-            echo "Creating release $TAG and uploading APK."
-            gh release create "$TAG" "$APK#Anu-debug.apk" \
-              --repo "$REPO" \
-              --title "Anu APK build ${{ github.run_number }}" \
-              --notes "Automated Anu debug APK build from commit ${{ github.sha }} with conversation-wise chat history repair." \
-              --target "${{ github.sha }}"
+            gh release create "$TAG" "$APK#Anu-debug.apk" --repo "$REPO" --title "Anu APK build ${{ github.run_number }}" --notes "Automated Anu debug APK build from commit ${{ github.sha }}." --target "${{ github.sha }}"
           fi
-
-# Build trigger: conversation-wise history and mobile functional repair.
