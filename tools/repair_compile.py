@@ -66,4 +66,44 @@ for file_name in ("ZoyaViewModel.kt", "ZoyaSessionManager.kt", "MainActivity.kt"
     path.write_text("".join(lines), encoding="utf-8")
 
 session.write_text(s, encoding="utf-8")
-print("Normalized generated Kotlin and verified the Live tool declaration helper is present before Gradle compile.")
+
+# The premium history renderer needs the conversation-aware callback arguments
+# added by apply_conversation_history.py. Keep this repair idempotent because
+# the build workflow regenerates the history UI on every run.
+main = ROOT / "MainActivity.kt"
+m = main.read_text(encoding="utf-8")
+old_call = '''        AnuChatHistoryDialog(
+            messages = state.chatMessages,
+            onDismiss = { showChatHistoryDialog = false },
+            onClear = {
+                onClearChat()
+                showChatHistoryDialog = false
+            }
+        )'''
+new_call = '''        AnuChatHistoryDialog(
+            messages = state.chatMessages,
+            conversations = state.chatConversations,
+            onSelectConversation = { id -> viewModel.selectConversation(id) },
+            onNewConversation = { viewModel.newConversation() },
+            onDismiss = { showChatHistoryDialog = false },
+            onClear = {
+                onClearChat()
+                showChatHistoryDialog = false
+            }
+        )'''
+if old_call in m:
+    m = m.replace(old_call, new_call, 1)
+
+# Avoid overload-resolution collisions in this generated dialog by explicitly
+# selecting Material 3 Surface. This also keeps the code robust if another
+# Compose Surface symbol is introduced later.
+if "fun AnuChatHistoryDialog" in m:
+    start = m.find("@Composable\nfun AnuChatHistoryDialog")
+    next_match = re.search(r"\n@Composable\nfun [A-Za-z0-9_]+", m[start + 1:]) if start >= 0 else None
+    end = start + 1 + next_match.start() if next_match else len(m)
+    history = m[start:end]
+    history = re.sub(r"(?<![A-Za-z0-9_.])Surface\(", "androidx.compose.material3.Surface(", history)
+    m = m[:start] + history + m[end:]
+
+main.write_text(m, encoding="utf-8")
+print("Repaired generated Kotlin, wired conversation callbacks, and qualified Material 3 Surface in Chat History.")
