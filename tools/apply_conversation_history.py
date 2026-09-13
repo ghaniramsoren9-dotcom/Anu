@@ -495,64 +495,20 @@ if "onNewConversation: () -> Unit" not in s:
 ) {""", 1
     )
 
-# Soft, clean, minimal header bar with soft History pill and New button
-top_bar_old = '''        // Header
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Chat",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = AnuTextDark
-            )'''
+# Soft, clean, minimal header bar with balanced braces
+old_box = """            Box {
+                IconButton(onClick = { showMenu = true }) {"""
 
-top_bar_new = '''        // Header: Clean, soft, minimized bar
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .background(AnuLavenderBg, RoundedCornerShape(10.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Outlined.AutoAwesome, null, tint = AnuPrimary, modifier = Modifier.size(17.dp))
-                }
-                Spacer(Modifier.width(10.dp))
-                Column {
-                    Text(
-                        text = "Anu",
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = AnuTextDark
-                    )
-                    Text(
-                        text = if (state.connectionState == ConnectionState.SPEAKING) "Speaking..." else if (state.connectionState == ConnectionState.LISTENING) "Listening..." else "AI Assistant",
-                        fontSize = 11.sp,
-                        color = AnuTextMuted
-                    )
-                }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
+new_box = """            Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = AnuLavenderBg,
                     modifier = Modifier.clickable { showChatHistoryDialog = true }
                 ) {
-                    Row(Modifier.padding(horizontal = 9.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.History, null, tint = AnuPrimary, modifier = Modifier.size(15.dp))
+                    Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.History, contentDescription = null, tint = AnuPrimary, modifier = Modifier.size(15.dp))
                         Spacer(Modifier.width(3.dp))
-                        Text("History", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = AnuPrimary)
+                        Text("History", color = AnuPrimary, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
                 Spacer(Modifier.width(6.dp))
@@ -561,20 +517,34 @@ top_bar_new = '''        // Header: Clean, soft, minimized bar
                     color = AnuLavenderBg,
                     modifier = Modifier.clickable { onNewConversation() }
                 ) {
-                    Row(Modifier.padding(horizontal = 9.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Add, null, tint = AnuPrimary, modifier = Modifier.size(15.dp))
+                    Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Add, contentDescription = null, tint = AnuPrimary, modifier = Modifier.size(15.dp))
                         Spacer(Modifier.width(2.dp))
-                        Text("New", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = AnuPrimary)
+                        Text("New", color = AnuPrimary, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
-                Spacer(Modifier.width(2.dp))'''
+                Spacer(Modifier.width(2.dp))
+                Box {
+                IconButton(onClick = { showMenu = true }) {"""
 
-if top_bar_old in s:
-    s = s.replace(top_bar_old, top_bar_new, 1)
+old_close = """            }
+        }
+
+        // Chat Message List or Empty Placeholder"""
+
+new_close = """                }
+            }
+        }
+
+        // Chat Message List or Empty Placeholder"""
+
+if old_box in s:
+    s = s.replace(old_box, new_box, 1)
+    s = s.replace(old_close, new_close, 1)
 
 # Add minimal horizontal conversation pills when > 1 conversation exists
 if "MinimalConversationPills" not in s:
-    conv_pills = '''        // Minimal Conversation Pills: Clean, soft, compact
+    conv_pills = """        // Minimal Conversation Pills: Clean, soft, compact
         if (state.chatConversations.size > 1) {
             androidx.compose.foundation.lazy.LazyRow(
                 modifier = Modifier
@@ -602,8 +572,12 @@ if "MinimalConversationPills" not in s:
                 }
             }
         }
-'''
-    s = re.sub(r'(\s*// Chat Message List or Empty Placeholder)', conv_pills + r'\1', s, count=1)
+"""
+    s = s.replace(
+        "        // Chat Message List or Empty Placeholder",
+        conv_pills + "\n        // Chat Message List or Empty Placeholder",
+        1
+    )
 
 # History Dialog: update signature and provide clean, soft, beautiful Saved conversations list
 if "conversations: List<AnuConversationSummary>" not in s:
