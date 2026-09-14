@@ -64,7 +64,10 @@ try:
     res = subprocess.run(["./gradlew", "compileDebugKotlin", "--stacktrace"], capture_output=True, text=True)
     if res.returncode != 0:
         print("=== COMPILE FAILED IN repair_compile.py ===")
-        error_log = f"Exit code: {res.returncode}\n\nSTDOUT:\n{res.stdout[-3000:]}\n\nSTDERR:\n{res.stderr[-3000:]}"
+        all_lines = (res.stdout + "\n" + res.stderr).splitlines()
+        e_lines = [l for l in all_lines if l.strip().startswith("e:") or "error:" in l.lower() or "exception" in l.lower() or "failed" in l.lower()]
+        summary = "\n".join(e_lines[:50])
+        error_log = f"Exit code: {res.returncode}\n\nERRORS:\n{summary}\n\nFULL_STDOUT_TAIL:\n{res.stdout[-2000:]}\n\nFULL_STDERR_TAIL:\n{res.stderr[-2000:]}"
         with open("COMPILE_ERROR.txt", "w") as f:
             f.write(error_log)
         subprocess.run(["git", "config", "user.name", "github-actions[bot]"])

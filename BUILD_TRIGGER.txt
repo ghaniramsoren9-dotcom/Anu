@@ -1,1 +1,1 @@
-Add compile diagnostic capture hook in repair_compile.py
+ci: update diagnostic error filter in repair_compile.py
