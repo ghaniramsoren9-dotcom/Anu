@@ -79,7 +79,7 @@ jobs:
           set -euo pipefail
           python3 tools/repair_multilingual_commands.py
 
-      - name: Repair invalid Kotlin backslash escapes
+      - name: Repair invalid Kotlin regex escapes
         shell: bash
         run: |
           set -euo pipefail
@@ -91,19 +91,26 @@ jobs:
           changed = 0
           replacements = 0
 
-          # Match a single literal backslash followed by s, but not an already escaped backslash.
-          invalid = re.compile(r"(?<!\\)\\s")
-          replacement = r"\\s"
+          # Kotlin only permits a defined set of string escapes. Regex metacharacters
+          # such as [, ], (, ), {, }, +, *, ?, | and . must use a doubled backslash
+          # in a normal Kotlin string, e.g. "\\[" rather than "\[".
+          invalid_regex_escapes = re.compile(r"(?<!\\)\\([\[\]().{}+*?|])")
+          replacements_by_char = {}
 
           for path in root.rglob("*.kt"):
               text = path.read_text(encoding="utf-8")
-              fixed, count = invalid.subn(replacement, text)
-              replacements += count
+              def fix(match):
+                  ch = match.group(1)
+                  replacements_by_char[ch] = replacements_by_char.get(ch, 0) + 1
+                  return "\\\\" + ch
+
+              fixed = invalid_regex_escapes.sub(fix, text)
               if fixed != text:
                   path.write_text(fixed, encoding="utf-8")
                   changed += 1
 
-          print(f"Repaired {replacements} invalid Kotlin \\s escape(s) in {changed} source file(s).")
+          replacements = sum(replacements_by_char.values())
+          print(f"Repaired {replacements} invalid Kotlin regex escape(s) in {changed} source file(s): {replacements_by_char}")
           PY
 
       - name: Normalize Kotlin apostrophe escapes
@@ -117,12 +124,12 @@ jobs:
           fi
           echo "Kotlin source escape normalization verified."
 
-      - name: Verify no invalid Kotlin regex whitespace escapes remain
+      - name: Verify no invalid Kotlin regex escapes remain
         shell: bash
         run: |
           set -euo pipefail
-          if grep -RInP '(?<!\\)\\s' app/src/main/java --include='*.kt'; then
-            echo "ERROR: invalid single-backslash \\s escape remains in Kotlin source"
+          if grep -RInP '(?<!\\)\\[\[\]().{}+*?|]' app/src/main/java --include='*.kt'; then
+            echo "ERROR: invalid single-backslash Kotlin regex escape remains"
             exit 1
           fi
           echo "Kotlin regex escape verification passed."
