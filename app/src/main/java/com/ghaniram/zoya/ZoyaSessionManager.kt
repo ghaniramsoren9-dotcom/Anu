@@ -476,6 +476,14 @@ object ZoyaSessionManager {
         }
         "accessibilityAction" -> phoneControls.accessibilityAction(args.optString("action"), args.optString("text"), args.optString("value"))
         "readScreen" -> AccessibilityControlService.instance?.uiSnapshot() ?: "Screen reading is unavailable because Anu Accessibility is not enabled."
+        "githubAction", "github", "githubCommit", "githubRepo" -> {
+            val action = args.optString("action").ifBlank { args.optString("command") }.lowercase().trim()
+            val repo = args.optString("repo").ifBlank { args.optString("repository") }.trim()
+            val path = args.optString("path").ifBlank { args.optString("file") }.trim()
+            val content = args.optString("content").ifBlank { args.optString("code") }
+            val message = args.optString("message").ifBlank { "Commit from Anu" }
+            phoneControls.githubAction(action, repo, path, content, message)
+        }
         "getDeviceInfo" -> {
             DeviceQueryContext.set(args.optString("query").ifBlank { _state.value.chatMessages.lastOrNull { it.role == ChatRole.USER }?.text.orEmpty() })
             DeviceInfoProvider.snapshot(app)
@@ -489,6 +497,17 @@ object ZoyaSessionManager {
         val appTool = JSONObject().put("name", "openApp").put("description", "Open an installed Android app by its visible name. Do not claim success unless the tool returns opened.")
         val web = JSONObject().put("name", "openWebsite").put("description", "Open a website in the user's browser. Only call this when the user explicitly asks to open a website or web page.")
         val access = JSONObject().put("name", "accessibilityAction").put("description", "Perform one specific verified UI action through Anu Accessibility. For current screen understanding, call readScreen first.")
+        val githubTool = JSONObject().put("name", "githubAction").put("description", "Read or modify the connected GitHub repository. Use this for explicit repository/file/commit requests. Never claim success unless the tool returns a successful GitHub result.").put("parameters", JSONObject().apply {
+            put("type", "object")
+            put("properties", JSONObject().apply {
+                put("action", prop("string", "GitHub operation: test, list_repos, read, write, create, or delete."))
+                put("repo", prop("string", "Repository in owner/name form. Leave blank to use Anu's configured default repository."))
+                put("path", prop("string", "Repository file path for read/write/create/delete operations."))
+                put("content", prop("string", "Complete UTF-8 file content for write/create operations."))
+                put("message", prop("string", "Commit message for write/create/delete operations."))
+            })
+            put("required", JSONArray().put("action"))
+        })
         val screen = JSONObject().put("name", "readScreen").put("description", "Read the CURRENT visible Android screen using Anu Accessibility. ALWAYS use this before deciding which UI control to interact with or what is displayed.")
         val device = JSONObject().put("name", "getDeviceInfo").put("description", "Read fresh LOCAL device telemetry. Treat returned values as ground truth. NEVER guess device specifications.")
         val taskTool = JSONObject()
@@ -502,7 +521,7 @@ object ZoyaSessionManager {
                 )
                 .put("required", JSONArray().put("title").put("time"))
             )
-        return JSONArray().put(phone).put(appTool).put(web).put(access).put(screen).put(device).put(taskTool)
+        return JSONArray().put(phone).put(appTool).put(web).put(access).put(screen).put(device).put(taskTool).put(githubTool)
     }
 
     private fun buildSystemInstruction(): String {
