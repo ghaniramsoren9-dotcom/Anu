@@ -298,6 +298,16 @@ fun AnuHomeScreen(
             delay(30_000L)
         }
     }
+    val context = LocalContext.current
+    val settingsStore = remember { AnuSettingsStore.getInstance(context) }
+    val userName = settingsStore.userName.trim().ifBlank { "Ghaniram" }
+    var currentHour by remember { mutableIntStateOf(Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+            delay(30_000L)
+        }
+    }
 
     LazyColumn(
         modifier = Modifier
