@@ -1,0 +1,91 @@
+name: Wire GitHub Tool Bridge
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-github-tool-bridge.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  wire:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Wire GitHub tool into Anu chat
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt')
+          s = p.read_text(encoding='utf-8')
+          changed = False
+
+          # 1) Expose the GitHub function to Gemini's function-calling schema.
+          if 'val githubTool = JSONObject().put("name", "githubAction")' not in s:
+              anchor = '        val screen = JSONObject().put("name", "readScreen")'
+              if anchor not in s:
+                  raise SystemExit('GitHub tool patch anchor not found: screen declaration')
+              github = '''        val githubTool = JSONObject().put("name", "githubAction").put("description", "Read or modify the connected GitHub repository. Use this for explicit repository/file/commit requests. Never claim success unless the tool returns a successful GitHub result.").put("parameters", JSONObject().apply {
+              put("type", "object")
+              put("properties", JSONObject().apply {
+                  put("action", prop("string", "GitHub operation: test, list_repos, read, write, create, or delete."))
+                  put("repo", prop("string", "Repository in owner/name form. Leave blank to use Anu's configured default repository."))
+                  put("path", prop("string", "Repository file path for read/write/create/delete operations."))
+                  put("content", prop("string", "Complete UTF-8 file content for write/create operations."))
+                  put("message", prop("string", "Commit message for write/create/delete operations."))
+              })
+              put("required", JSONArray().put("action"))
+          })
+'''
+              s = s.replace(anchor, github + anchor, 1)
+              changed = True
+
+          # 2) Include the function declaration in the tool array sent to Gemini Live.
+          old_return = 'return JSONArray().put(phone).put(appTool).put(web).put(access).put(screen).put(device).put(taskTool)'
+          new_return = 'return JSONArray().put(phone).put(appTool).put(web).put(access).put(screen).put(device).put(taskTool).put(githubTool)'
+          if old_return in s:
+              s = s.replace(old_return, new_return, 1)
+              changed = True
+
+          # 3) Route Gemini's function call to the existing GitHubConnectorClient-backed action.
+          if '"githubAction", "github", "githubCommit", "githubRepo" ->' not in s:
+              anchor = '        "getDeviceInfo" -> {'
+              if anchor not in s:
+                  raise SystemExit('GitHub executeTool patch anchor not found: getDeviceInfo')
+              case = '''        "githubAction", "github", "githubCommit", "githubRepo" -> {
+              val action = args.optString("action").ifBlank { args.optString("command") }.lowercase().trim()
+              val repo = args.optString("repo").ifBlank { args.optString("repository") }.trim()
+              val path = args.optString("path").ifBlank { args.optString("file") }.trim()
+              val content = args.optString("content").ifBlank { args.optString("code") }
+              val message = args.optString("message").ifBlank { "Commit from Anu" }
+              phoneControls.githubAction(action, repo, path, content, message)
+          }
+'''
+              s = s.replace(anchor, case + anchor, 1)
+              changed = True
+
+          if not changed:
+              print('GitHub tool bridge already wired; no changes needed.')
+          else:
+              p.write_text(s, encoding='utf-8')
+              print('GitHub tool bridge wired successfully.')
+          PY
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          if git diff --quiet -- app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt; then
+            echo 'No source changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
+          git commit -m 'fix: wire GitHub tool into Anu chat function calling'
+          git push
