@@ -6,8 +6,6 @@ MAIN = ROOT / "MainActivity.kt"
 PHONE = ROOT / "PhoneControlManager.kt"
 SESSION = ROOT / "ZoyaSessionManager.kt"
 
-# This script is also used as an idempotent repair guard by the build workflow.
-
 def replace_once(path, old, new, label):
     s = path.read_text(encoding="utf-8")
     if old in s:
@@ -33,13 +31,12 @@ if old in s:
 else:
     print("skip home greeting anchor")
 
-# BasicTextField must own focus and remain directly editable on modern Android/Compose.
-s = s.replace('modifier = Modifier.fillMaxWidth()\n                        )\n                    }\n\n                    Spacer(Modifier.width(8.dp))', 'modifier = Modifier.fillMaxWidth().focusable()\n                        )\n                    }\n\n                    Spacer(Modifier.width(8.dp))', 1)
+# BasicTextField is already an editable text input. Do not add Modifier.focusable(),
+# because this project's Compose dependencies do not expose that extension.
+s = s.replace('.focusable()', '')
 MAIN.write_text(s, encoding="utf-8")
 
-# 2) Device controls: volume was implemented in PhoneControlManager but was not
-# reachable through accessibilityAction. Add canonical aliases and a reliable
-# fallback for the accessibility service being disabled.
+# 2) Device controls: accessibility actions and reliable disabled-service fallback.
 s = PHONE.read_text(encoding="utf-8")
 old = '''        if (service == null) {\n            return if (normalized in listOf("home", "gohome", "homescreen")) goHome()\n            else "Anu phone-control accessibility is not enabled. Open Accessibility settings and enable Anu."\n        }'''
 new = '''        if (service == null) {\n            val needsAccessibility = normalized in listOf(\n                "back", "goback", "recents", "recentapps", "openrecentapps",\n                "notifications", "opennotifications", "quicksettings", "openquicksettings",\n                "power", "powerdialog", "lock", "lockscreen", "home", "gohome"\n            )\n            if (needsAccessibility) {\n                runCatching { openAccessibilitySettings() }\n                return "Anu phone-control accessibility is not enabled. I opened Accessibility settings; enable Anu, then retry the command."\n            }\n            return "Anu phone-control accessibility is not enabled. Open Accessibility settings and enable Anu."\n        }'''
@@ -55,8 +52,7 @@ else:
     print("skip volume routing anchor")
 PHONE.write_text(s, encoding="utf-8")
 
-# 3) Persisted personal settings must be part of Anu's system context so a
-# saved YouTube channel name/URL/ID is actually understood when mentioned.
+# 3) Persisted personal settings in Anu's system context.
 s = SESSION.read_text(encoding="utf-8")
 old3 = '''        val memories = persistedMemories.joinToString("\\n") { it.take(700) }\n        buildString {\n            append("PERSISTENT MEMORY CONTEXT. This is stored history, NOT current sensory evidence.\\n")'''
 new3 = '''        val memories = persistedMemories.joinToString("\\n") { it.take(700) }\n        val settings = AnuSettingsStore.getInstance(app)\n        val userName = settings.userName.trim()\n        val favoriteSong = settings.favoriteSong.trim()\n        val youtubeChannel = settings.youtubeChannel.trim()\n        buildString {\n            append("PERSISTENT MEMORY CONTEXT. This is stored history, NOT current sensory evidence.\\n")\n            if (userName.isNotBlank()) append("User's saved name: $userName\\n")\n            if (favoriteSong.isNotBlank()) append("User's saved favorite song: $favoriteSong\\n")\n            if (youtubeChannel.isNotBlank()) {\n                append("User's saved YouTube channel: $youtubeChannel\\n")\n                append("If the user mentions this saved YouTube channel by its name, URL, handle, or channel ID, treat it as their configured channel. When they ask to open it, use YouTube/openApp or a web URL as appropriate; do not ignore the saved channel setting.\\n")\n            }\n'''
@@ -66,9 +62,9 @@ else:
     print("skip personal context anchor")
 SESSION.write_text(s, encoding="utf-8")
 
-# 4) History UI: keep the complete persisted list in chronological order and
-# avoid accidental UI-side truncation if an earlier generator inserted one.
+# 4) History ordering without truncating persisted conversations.
 s = MAIN.read_text(encoding="utf-8")
+s = s.replace('.focusable()', '')
 s2 = re.sub(r'val filteredMessages = remember\(messages, searchQuery\) \{\s*if \(searchQuery\.isBlank\(\)\) messages\s*else messages\.filter', 'val filteredMessages = remember(messages, searchQuery) {\n        val orderedMessages = messages.sortedBy { it.timestampMillis }\n        if (searchQuery.isBlank()) orderedMessages\n        else orderedMessages.filter', s, count=1)
 if s2 != s:
     MAIN.write_text(s2, encoding="utf-8")
