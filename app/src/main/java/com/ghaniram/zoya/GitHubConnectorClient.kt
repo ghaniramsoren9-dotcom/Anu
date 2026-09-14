@@ -45,17 +45,27 @@ object GitHubConnectorClient {
                 .header("User-Agent", "Anu-Assistant-Android").build()
             client.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
-                if (!response.isSuccessful) return "GitHub error: HTTP ${response.code}"
-                val array = JSONArray(body)
-                val names = mutableListOf<String>()
-                for (i in 0 until minOf(array.length(), 10)) names.add(array.getJSONObject(i).optString("full_name"))
-                if (names.isEmpty()) "No repositories found." else "Recent repositories:\n" + names.joinToString("\n") { "• $it" }
+                if (!response.isSuccessful) {
+                    "GitHub error: HTTP ${response.code}"
+                } else {
+                    val array = JSONArray(body)
+                    val names = mutableListOf<String>()
+                    for (i in 0 until minOf(array.length(), 10)) {
+                        names.add(array.getJSONObject(i).optString("full_name"))
+                    }
+                    if (names.isEmpty()) "No repositories found."
+                    else "Recent repositories:\n" + names.joinToString("\n") { "• $it" }
+                }
             }
-        } catch (e: Exception) { "Could not fetch repositories: ${e.message ?: "network error"}" }
+        } catch (e: Exception) {
+            "Could not fetch repositories: ${e.message ?: "network error"}"
+        }
     }
 
     fun createRepo(token: String, name: String, description: String = "", isPrivate: Boolean = false): String = try {
-        val payload = JSONObject().apply { put("name", name.trim()); put("description", description.trim()); put("private", isPrivate); put("auto_init", true) }
+        val payload = JSONObject().apply {
+            put("name", name.trim()); put("description", description.trim()); put("private", isPrivate); put("auto_init", true)
+        }
         val request = Request.Builder().url("https://api.github.com/user/repos")
             .header("Authorization", "Bearer ${token.trim()}").header("Accept", "application/vnd.github+json")
             .header("User-Agent", "Anu-Assistant-Android").post(payload.toString().toRequestBody(JSON_MEDIA_TYPE)).build()
