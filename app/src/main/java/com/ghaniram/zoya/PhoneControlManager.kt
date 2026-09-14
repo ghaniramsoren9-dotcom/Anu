@@ -44,12 +44,23 @@ class PhoneControlManager(private val app: Application) {
         if (normalized in listOf("home", "gohome", "homescreen", "openhome")) return goHome()
         val service = AccessibilityControlService.instance
         if (service == null) {
-            return if (normalized in listOf("home", "gohome", "homescreen")) goHome()
-            else "Anu phone-control accessibility is not enabled. Open Accessibility settings and enable Anu."
+            val needsAccessibility = normalized in listOf(
+                "back", "goback", "recents", "recentapps", "openrecentapps",
+                "notifications", "opennotifications", "quicksettings", "openquicksettings",
+                "power", "powerdialog", "lock", "lockscreen", "home", "gohome"
+            )
+            if (needsAccessibility) {
+                runCatching { openAccessibilitySettings() }
+                return "Anu phone-control accessibility is not enabled. I opened Accessibility settings; enable Anu, then retry the command."
+            }
+            return "Anu phone-control accessibility is not enabled. Open Accessibility settings and enable Anu."
         }
         val textToType = if (value.isNotBlank()) value else text
         val ok = when (normalized) {
             "home", "gohome", "back", "goback", "recents", "recentapps", "openrecentapps", "notifications", "opennotifications", "quicksettings", "openquicksettings", "power", "powerdialog", "lock", "lockscreen" -> service.globalAction(action)
+            "volumeup", "volume_up", "raisevolume", "soundup", "volumeincrease" -> { volumeUp(); true }
+            "volumedown", "volume_down", "lowervolume", "sounddown", "volumedecrease" -> { volumeDown(); true }
+            "mute", "mutevolume", "togglemute" -> { muteVolume(); true }
             "click", "clicktext" -> service.clickByText(text)
             "longclick", "longclicktext" -> service.clickByText(text, longClick = true)
             "settext", "settextbytext" -> service.setTextByText(text, textToType)

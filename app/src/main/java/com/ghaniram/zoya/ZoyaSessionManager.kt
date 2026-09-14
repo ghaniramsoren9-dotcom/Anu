@@ -260,8 +260,19 @@ object ZoyaSessionManager {
             "$who: ${msg.text.take(900)}"
         }
         val memories = persistedMemories.joinToString("\n") { it.take(700) }
+        val settings = AnuSettingsStore.getInstance(app)
+        val userName = settings.userName.trim()
+        val favoriteSong = settings.favoriteSong.trim()
+        val youtubeChannel = settings.youtubeChannel.trim()
         buildString {
             append("PERSISTENT MEMORY CONTEXT. This is stored history, NOT current sensory evidence.\n")
+            if (userName.isNotBlank()) append("User's saved name: $userName\n")
+            if (favoriteSong.isNotBlank()) append("User's saved favorite song: $favoriteSong\n")
+            if (youtubeChannel.isNotBlank()) {
+                append("User's saved YouTube channel: $youtubeChannel\n")
+                append("If the user mentions this saved YouTube channel by its name, URL, handle, or channel ID, treat it as their configured channel. When they ask to open it, use YouTube/openApp or a web URL as appropriate; do not ignore the saved channel setting.\n")
+            }
+
             if (memories.isNotBlank()) append("Saved user memories:\n$memories\n")
             if (recent.isNotBlank()) append("Previous conversation:\n$recent\n")
             append("Use stored history when the user asks what was discussed before. Never invent a memory. If a fact is absent, say it is not in memory.\n")
