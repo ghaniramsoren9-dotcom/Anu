@@ -1,2 +1,6 @@
-Anu floating companion build verification trigger
-Fix: Handler animation scheduling compatibility
+Fix build: preserve pristine PhoneControlManager during apply_conversation_history step
+
+- Prevent apply_conversation_history from overwriting PhoneControlManager when rich implementations are already present
+- Fixes multiline string escaping error in writeNote ("$title\n\n$content") that caused KSP parsing failure
+- Restores clean repair_compile.py without diagnostic overhead
+- Preserves GitHubConnectorClient, Sub-Agents coding models, and lossless typing

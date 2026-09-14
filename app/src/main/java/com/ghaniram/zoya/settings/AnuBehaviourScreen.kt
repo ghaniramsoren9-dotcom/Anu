@@ -24,7 +24,7 @@ import com.ghaniram.zoya.ui.theme.AnuPrimary
 
 /**
  * Behaviour Settings Screen matching Page 24 of the specification.
- * Fully interactive with live overlay controls, audio switches, and boot settings.
+ * Fully interactive with live overlay controls, audio switches, screen vision, and boot settings.
  */
 @Composable
 fun AnuBehaviourScreen(
@@ -103,6 +103,34 @@ fun AnuBehaviourScreen(
                 }
             }
 
+            // Audio + Screen Vision
+            item {
+                SettingsCardContainer {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Visibility, null, tint = colors.accentPrimary, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Screen Vision", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = colors.textPrimary)
+                    }
+                    Text("Let Anu inspect the actual screen pixels, including images, video and games.", fontSize = 11.5.sp, color = colors.textSecondary)
+                    Spacer(Modifier.height(10.dp))
+
+                    SettingsToggleRow(
+                        title = "Screen Vision",
+                        subtitle = "OFF: no screen frames are uploaded. ON: Anu samples changed screen frames while the Live session is active.",
+                        checked = screenRecordingState,
+                        onCheckedChange = {
+                            screenRecordingState = it
+                            store.screenRecordingMode = it
+                            Toast.makeText(
+                                context,
+                                if (it) "Screen Vision ON — Anu can see screen images, video and games." else "Screen Vision OFF — screen frames are not uploaded.",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    )
+                }
+            }
+
             // Audio
             item {
                 SettingsCardContainer {
@@ -120,17 +148,6 @@ fun AnuBehaviourScreen(
                         onCheckedChange = {
                             echoGuardState = it
                             store.echoGuardEnabled = it
-                        }
-                    )
-
-                    Spacer(Modifier.height(10.dp))
-                    SettingsToggleRow(
-                        title = "Screen-recording mode",
-                        subtitle = "Play Anu on the media stream so screen recorders capture her voice. Use earphones — on the loud speaker a light echo can appear. Applies on next start.",
-                        checked = screenRecordingState,
-                        onCheckedChange = {
-                            screenRecordingState = it
-                            store.screenRecordingMode = it
                         }
                     )
                 }

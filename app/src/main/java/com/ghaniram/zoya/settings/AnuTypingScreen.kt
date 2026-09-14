@@ -17,7 +17,8 @@ import com.ghaniram.zoya.ui.theme.LocalAnuColors
 
 /**
  * Typing Settings Screen matching Page 25 of the specification.
- * Interactive human typing simulator controls with dynamic theme support.
+ * Interactive human typing simulator controls, long content protection,
+ * and coding editor integrations with dynamic theme support.
  */
 @Composable
 fun AnuTypingScreen(
@@ -28,6 +29,8 @@ fun AnuTypingScreen(
     var humanTypingState by remember { mutableStateOf(store.humanTypingInEditors) }
     var speedState by remember { mutableStateOf(store.typingSpeed) }
     var codingTypingState by remember { mutableStateOf(store.realisticTypingWhileCoding) }
+    var longContentProtectionState by remember { mutableStateOf(store.maxTypingLengthUnlimited) }
+    var smartPasteState by remember { mutableStateOf(store.longTextFastPaste) }
     var appsState by remember { mutableStateOf(store.typingTargetApps) }
 
     Column(
@@ -55,7 +58,7 @@ fun AnuTypingScreen(
                         Spacer(Modifier.width(8.dp))
                         Text("Realistic typing", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = colors.textPrimary)
                     }
-                    Text("Type like a human in editors", fontSize = 11.5.sp, color = colors.textSecondary)
+                    Text("Type naturally in editors with full support for long code and notes", fontSize = 11.5.sp, color = colors.textSecondary)
                     Spacer(Modifier.height(12.dp))
 
                     SettingsToggleRow(
@@ -72,7 +75,7 @@ fun AnuTypingScreen(
                     Text("Typing speed", fontSize = 11.5.sp, color = colors.textSecondary)
                     Spacer(Modifier.height(6.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("Slow", "Normal", "Fast").forEach { spd ->
+                        listOf("Instant", "Fast", "Normal", "Slow").forEach { spd ->
                             val isSelected = speedState.equals(spd, ignoreCase = true)
                             ChoiceChipPill(
                                 label = spd,
@@ -88,7 +91,7 @@ fun AnuTypingScreen(
                     Spacer(Modifier.height(14.dp))
                     SettingsToggleRow(
                         title = "Realistic typing while coding",
-                        subtitle = "Applies to coding tasks too",
+                        subtitle = "Applies human pacing to coding tasks and terminal editors",
                         checked = codingTypingState,
                         onCheckedChange = {
                             codingTypingState = it
@@ -97,7 +100,29 @@ fun AnuTypingScreen(
                     )
 
                     Spacer(Modifier.height(14.dp))
-                    Text("Apps where it's on", fontSize = 11.5.sp, color = colors.textSecondary)
+                    SettingsToggleRow(
+                        title = "Long content & code protection",
+                        subtitle = "Ensures large code files, long notes, and essays are written completely without length caps",
+                        checked = longContentProtectionState,
+                        onCheckedChange = {
+                            longContentProtectionState = it
+                            store.maxTypingLengthUnlimited = it
+                        }
+                    )
+
+                    Spacer(Modifier.height(14.dp))
+                    SettingsToggleRow(
+                        title = "Smart clipboard paste for large code",
+                        subtitle = "Uses instant lossless clipboard paste for multi-line code and notes to preserve exact indentation",
+                        checked = smartPasteState,
+                        onCheckedChange = {
+                            smartPasteState = it
+                            store.longTextFastPaste = it
+                        }
+                    )
+
+                    Spacer(Modifier.height(14.dp))
+                    Text("Apps where typing is active", fontSize = 11.5.sp, color = colors.textSecondary)
                     Spacer(Modifier.height(6.dp))
                     BasicInputField(
                         value = appsState,
@@ -105,12 +130,12 @@ fun AnuTypingScreen(
                             appsState = it
                             store.typingTargetApps = it
                         },
-                        placeholder = "com.google.android.keep,com.termux..."
+                        placeholder = "com.google.android.keep,com.termux,com.foxdebug.acode..."
                     )
 
                     Spacer(Modifier.height(8.dp))
                     SettingsTipBanner(
-                        text = "Comma-separated package names. Everywhere else stays instant."
+                        text = "Comma-separated package names for notes and coding apps. Everywhere else stays instant."
                     )
                 }
             }

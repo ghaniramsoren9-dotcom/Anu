@@ -159,8 +159,8 @@ class AnuSettingsStore private constructor(context: Context) {
     // SUB-AGENTS
     // -------------------------------------------------------------
     var codingModelsOrder: String
-        get() = prefs.getString("coding_models_order", "gemini-3.6-flash,gemini-3.1-flash-lite,gemini-2.5-flash,gemini-3.5-flash")
-            ?: "gemini-3.6-flash,gemini-3.1-flash-lite,gemini-2.5-flash,gemini-3.5-flash"
+        get() = prefs.getString("coding_models_order", "gemini-2.5-pro,claude-3-7-sonnet,deepseek-r1,qwen-2.5-coder-32b,gemini-2.0-flash-thinking,claude-3-5-sonnet,gpt-4o,gemini-3.6-flash,gemini-2.5-flash")
+            ?: "gemini-2.5-pro,claude-3-7-sonnet,deepseek-r1,qwen-2.5-coder-32b,gemini-2.0-flash-thinking,claude-3-5-sonnet,gpt-4o,gemini-3.6-flash,gemini-2.5-flash"
         set(value) { prefs.edit().putString("coding_models_order", value).apply(); notifyChanged() }
 
     var customProvidersEnabled: Boolean
@@ -170,6 +170,14 @@ class AnuSettingsStore private constructor(context: Context) {
     var defaultGeminiProviderActive: Boolean
         get() = prefs.getBoolean("default_gemini_provider_active", true)
         set(value) { prefs.edit().putBoolean("default_gemini_provider_active", value).apply(); notifyChanged() }
+
+    var customProvidersJson: String
+        get() = prefs.getString("custom_providers_json", "[]") ?: "[]"
+        set(value) { prefs.edit().putString("custom_providers_json", value).apply(); notifyChanged() }
+
+    var activeCodingModel: String
+        get() = prefs.getString("active_coding_model", "gemini-2.5-pro") ?: "gemini-2.5-pro"
+        set(value) { prefs.edit().putString("active_coding_model", value).apply(); notifyChanged() }
 
     // -------------------------------------------------------------
     // EMAIL
@@ -283,6 +291,37 @@ class AnuSettingsStore private constructor(context: Context) {
         connectedAccounts = current
     }
 
+    fun getConnectorToken(connectorId: String): String =
+        prefs.getString("connector_token_$connectorId", "") ?: ""
+
+    fun setConnectorToken(connectorId: String, token: String) {
+        prefs.edit().putString("connector_token_$connectorId", token.trim()).apply()
+        val current = connectedAccounts.toMutableSet()
+        if (token.isNotBlank()) current.add(connectorId) else current.remove(connectorId)
+        connectedAccounts = current
+        notifyChanged()
+    }
+
+    fun removeConnector(connectorId: String) {
+        prefs.edit().remove("connector_token_$connectorId").apply()
+        val current = connectedAccounts.toMutableSet()
+        current.remove(connectorId)
+        connectedAccounts = current
+        notifyChanged()
+    }
+
+    var githubToken: String
+        get() = getConnectorToken("github")
+        set(value) = setConnectorToken("github", value)
+
+    var githubUsername: String
+        get() = prefs.getString("github_username", "") ?: ""
+        set(value) { prefs.edit().putString("github_username", value.trim()).apply(); notifyChanged() }
+
+    var githubDefaultRepo: String
+        get() = prefs.getString("github_default_repo", "") ?: ""
+        set(value) { prefs.edit().putString("github_default_repo", value.trim()).apply(); notifyChanged() }
+
     // -------------------------------------------------------------
     // THEME & APPEARANCE
     // -------------------------------------------------------------
@@ -367,9 +406,17 @@ class AnuSettingsStore private constructor(context: Context) {
     var typingTargetApps: String
         get() = prefs.getString(
             "typing_target_apps",
-            "com.google.android.keep,com.google.android.apps.docs.editors.docs,com.samsung.android.app.notes,com.termux,net.gsantner.markor,com.foxdebug.acode,org.jotdown.jota"
-        ) ?: "com.google.android.keep,com.google.android.apps.docs.editors.docs,com.samsung.android.app.notes,com.termux,net.gsantner.markor,com.foxdebug.acode,org.jotdown.jota"
+            "com.google.android.keep,com.google.android.apps.docs.editors.docs,com.samsung.android.app.notes,com.termux,net.gsantner.markor,com.foxdebug.acode,org.jotdown.jota,io.spck,com.microsoft.office.word,com.notion.id"
+        ) ?: "com.google.android.keep,com.google.android.apps.docs.editors.docs,com.samsung.android.app.notes,com.termux,net.gsantner.markor,com.foxdebug.acode,org.jotdown.jota,io.spck,com.microsoft.office.word,com.notion.id"
         set(value) { prefs.edit().putString("typing_target_apps", value).apply(); notifyChanged() }
+
+    var longTextFastPaste: Boolean
+        get() = prefs.getBoolean("long_text_fast_paste", true)
+        set(value) { prefs.edit().putBoolean("long_text_fast_paste", value).apply(); notifyChanged() }
+
+    var maxTypingLengthUnlimited: Boolean
+        get() = prefs.getBoolean("max_typing_length_unlimited", true)
+        set(value) { prefs.edit().putBoolean("max_typing_length_unlimited", value).apply(); notifyChanged() }
 
     // -------------------------------------------------------------
     // VOICE GUARDIAN
@@ -589,73 +636,33 @@ class AnuSettingsStore private constructor(context: Context) {
         set(value) { prefs.edit().putBoolean("trig_headphones_unplugged", value).apply(); notifyChanged() }
 
     var triggerBluetoothConnected: Boolean
-        get() = prefs.getBoolean("trig_bluetooth_connected", true)
+        get() = prefs.getBoolean("trig_bluetooth_connected", false)
         set(value) { prefs.edit().putBoolean("trig_bluetooth_connected", value).apply(); notifyChanged() }
 
     var triggerBluetoothDisconnected: Boolean
-        get() = prefs.getBoolean("trig_bluetooth_disconnected", true)
+        get() = prefs.getBoolean("trig_bluetooth_disconnected", false)
         set(value) { prefs.edit().putBoolean("trig_bluetooth_disconnected", value).apply(); notifyChanged() }
 
     var triggerWifiConnected: Boolean
         get() = prefs.getBoolean("trig_wifi_connected", false)
         set(value) { prefs.edit().putBoolean("trig_wifi_connected", value).apply(); notifyChanged() }
 
-    var triggerWifiLost: Boolean
-        get() = prefs.getBoolean("trig_wifi_lost", false)
-        set(value) { prefs.edit().putBoolean("trig_wifi_lost", value).apply(); notifyChanged() }
-
-    var triggerAirplaneModeOn: Boolean
-        get() = prefs.getBoolean("trig_airplane_on", true)
-        set(value) { prefs.edit().putBoolean("trig_airplane_on", value).apply(); notifyChanged() }
-
-    var triggerAirplaneModeOff: Boolean
-        get() = prefs.getBoolean("trig_airplane_off", true)
-        set(value) { prefs.edit().putBoolean("trig_airplane_off", value).apply(); notifyChanged() }
-
-    var triggerPhoneOnSilent: Boolean
-        get() = prefs.getBoolean("trig_phone_silent", false)
-        set(value) { prefs.edit().putBoolean("trig_phone_silent", value).apply(); notifyChanged() }
-
-    var triggerRingerBackOn: Boolean
-        get() = prefs.getBoolean("trig_ringer_back_on", false)
-        set(value) { prefs.edit().putBoolean("trig_ringer_back_on", value).apply(); notifyChanged() }
-
-    var triggerAppInstalled: Boolean
-        get() = prefs.getBoolean("trig_app_installed", true)
-        set(value) { prefs.edit().putBoolean("trig_app_installed", value).apply(); notifyChanged() }
-
-    var triggerAppUninstalled: Boolean
-        get() = prefs.getBoolean("trig_app_uninstalled", true)
-        set(value) { prefs.edit().putBoolean("trig_app_uninstalled", value).apply(); notifyChanged() }
+    var triggerWifiDisconnected: Boolean
+        get() = prefs.getBoolean("trig_wifi_disconnected", false)
+        set(value) { prefs.edit().putBoolean("trig_wifi_disconnected", value).apply(); notifyChanged() }
 
     // -------------------------------------------------------------
-    // OPTIONAL INTEGRATIONS & PLACES
+    // EXPORT / IMPORT JSON
     // -------------------------------------------------------------
-    var mapsApiKey: String
-        get() = prefs.getString("maps_api_key", "") ?: ""
-        set(value) { prefs.edit().putString("maps_api_key", value).apply(); notifyChanged() }
-
-    var smartGeofencingEnabled: Boolean
-        get() = prefs.getBoolean("smart_geofencing_enabled", true)
-        set(value) { prefs.edit().putBoolean("smart_geofencing_enabled", value).apply(); notifyChanged() }
-
-    var weatherProvider: String
-        get() = prefs.getString("weather_provider", "Open-Meteo (Free)") ?: "Open-Meteo (Free)"
-        set(value) { prefs.edit().putString("weather_provider", value).apply(); notifyChanged() }
-
-    // -------------------------------------------------------------
-    // BACKUP & RESTORE EXPORT LOGIC
-    // -------------------------------------------------------------
-    fun exportBackupJson(memories: List<String>, messagesCount: Int): String {
+    fun exportSettingsJson(): String {
         val root = JSONObject()
-        root.put("app", "Anu")
-        root.put("version", "4.0.0")
-        root.put("timestamp", System.currentTimeMillis())
+        val connArray = JSONArray()
+        connectedAccounts.forEach { connArray.put(it) }
+        root.put("connected_accounts", connArray)
 
-        val memArray = JSONArray()
-        memories.forEach { memArray.put(it) }
-        root.put("memories", memArray)
-        root.put("conversations_count", messagesCount)
+        val skillsArray = JSONArray()
+        enabledSkills.forEach { skillsArray.put(it) }
+        root.put("enabled_skills", skillsArray)
 
         val sosArray = JSONArray()
         getSosContacts().forEach { sosArray.put(it) }
@@ -671,6 +678,9 @@ class AnuSettingsStore private constructor(context: Context) {
         settingsObj.put("themePreset", themePreset)
         settingsObj.put("orbStyle", orbStyle)
         settingsObj.put("orbColorName", orbColorName)
+        settingsObj.put("codingModelsOrder", codingModelsOrder)
+        settingsObj.put("githubUsername", githubUsername)
+        settingsObj.put("githubDefaultRepo", githubDefaultRepo)
         root.put("settings", settingsObj)
 
         return root.toString(2)

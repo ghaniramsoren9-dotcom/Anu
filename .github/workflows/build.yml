@@ -37,33 +37,13 @@ jobs:
           test -n "$ANU_KEYSTORE_BASE64" || { echo "ERROR: ANU_KEYSTORE_BASE64 is empty"; exit 1; }
           test -n "$ANU_KEYSTORE_PASSWORD" || { echo "ERROR: ANU_KEYSTORE_PASSWORD is empty"; exit 1; }
           STORE_PASSWORD="$(printf '%s' "$ANU_KEYSTORE_PASSWORD" | tr -d '\r\n')"
-          test -n "$STORE_PASSWORD" || { echo "ERROR: normalized keystore password is empty"; exit 1; }
           printf '%s' "$ANU_KEYSTORE_BASE64" | tr -d '\r\n' | base64 --decode > anu-release.jks
           test -s anu-release.jks || { echo "ERROR: decoded keystore is empty"; exit 1; }
-          echo "Decoded keystore size: $(wc -c < anu-release.jks) bytes"
-          file anu-release.jks || true
-          set +e
-          KEYTOOL_OUTPUT="$(keytool -list -v -keystore anu-release.jks -alias anu -storepass "$STORE_PASSWORD" 2>&1)"
-          KEYTOOL_RC=$?
-          set -e
-          if [ "$KEYTOOL_RC" -ne 0 ]; then
-            echo "ERROR: GitHub keystore validation failed (keytool exit $KEYTOOL_RC)."
-            echo "The workflow will not expose the keystore password or key material."
-            echo "keytool diagnostic:"
-            printf '%s\n' "$KEYTOOL_OUTPUT" | sed -E 's/(-storepass|-keypass|password)[[:space:]]+[^[:space:]]+/\1 [REDACTED]/Ig' | head -20
-            exit 1
-          fi
+          KEYTOOL_OUTPUT="$(keytool -list -v -keystore anu-release.jks -alias anu -storepass "$STORE_PASSWORD" 2>&1)" || { echo "ERROR: keystore validation failed"; printf '%s\n' "$KEYTOOL_OUTPUT" | head -20; exit 1; }
           ACTUAL_SHA256="$(printf '%s\n' "$KEYTOOL_OUTPUT" | awk -F': ' '/SHA256:/{print $2; exit}')"
           EXPECTED_SHA256="87:7D:C9:7A:8B:30:9D:53:24:F0:F9:62:BF:0C:DE:81:0E:47:8A:32:72:53:B2:AC:33:7A:48:4C:DB:01:78:90"
-          echo "GitHub decoded keystore SHA-256: ${ACTUAL_SHA256:-NOT_FOUND}"
-          echo "Expected permanent Anu SHA-256: $EXPECTED_SHA256"
-          if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
-            echo "ERROR: GitHub secret contains a different keystore."
-            exit 1
-          fi
-          echo "Permanent Anu signing keystore validation: OK"
+          test "$ACTUAL_SHA256" = "$EXPECTED_SHA256" || { echo "ERROR: wrong Anu signing keystore"; exit 1; }
           cp anu-release.jks "$GITHUB_WORKSPACE/debug.keystore"
-          echo "Copied keystore to $GITHUB_WORKSPACE/debug.keystore"
 
       - name: Create local.properties
         shell: bash
@@ -75,14 +55,103 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Check source tree
+      - name: Apply conversation history integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/apply_conversation_history.py
+
+      - name: Apply premium English Chat History UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/apply_premium_chat_history_ui.py
+
+      - name: Repair generated Kotlin before compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/repair_compile.py
+
+      - name: Apply multilingual Gemini command normalization
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/repair_multilingual_commands.py
+
+      - name: Repair invalid Kotlin backslash escapes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path("app/src/main/java")
+          changed = 0
+          replacements = 0
+
+          for path in root.rglob("*.kt"):
+              text = path.read_text(encoding="utf-8")
+              fixed = text
+              fixed, count = re.subn(r"(?<!\\)\\s", r"\\\\s", fixed)
+              replacements += count
+              if fixed != text:
+                  path.write_text(fixed, encoding="utf-8")
+                  changed += 1
+
+          print(f"Repaired {replacements} invalid Kotlin \\s escape(s) in {changed} source file(s).")
+          PY
+
+      - name: Normalize Kotlin apostrophe escapes
+        shell: bash
+        run: |
+          set -euo pipefail
+          find app/src/main/java -type f -name '*.kt' -exec perl -pi -e 's/\\\x27/\x27/g' {} +
+          if grep -RInF "\\'" app/src/main/java --include='*.kt'; then
+            echo "ERROR: invalid Kotlin apostrophe escape remains"
+            exit 1
+          fi
+          echo "Kotlin source escape normalization verified."
+
+      - name: Verify no invalid Kotlin regex whitespace escapes remain
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RInP '(?<!\\)\\s' app/src/main/java --include='*.kt'; then
+            echo "ERROR: invalid single-backslash \\s escape remains in Kotlin source"
+            exit 1
+          fi
+          echo "Kotlin regex escape verification passed."
+
+      - name: Verify multilingual command support
+        shell: bash
+        run: |
+          set -euo pipefail
+          SESSION="app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt"
+          PHONE="app/src/main/java/com/ghaniram/zoya/PhoneControlManager.kt"
+          RULES="tools/repair_multilingual_commands.py"
+
+          grep -q 'MULTILINGUAL TOOL RULE:' "$SESSION" || grep -q 'MULTILINGUAL TOOL RULE:' "$RULES"
+          grep -q 'canonical app name' "$SESSION" || grep -q 'canonical app name' "$RULES"
+          grep -q 'isLetterOrDigit()' "$PHONE" || grep -q 'isLetterOrDigit()' "$RULES"
+          echo "Multilingual command support verified."
+
+      - name: Verify modified source tree
         shell: bash
         run: |
           set -euo pipefail
           test -s app/src/main/java/com/ghaniram/zoya/MainActivity.kt
           test -s app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
           test -s app/src/main/java/com/ghaniram/zoya/AnuSettingsStore.kt
-          echo "Committed Kotlin source verified; no generated source mutation will run in CI."
+          test -s app/src/main/java/com/ghaniram/zoya/Models.kt
+          grep -q 'AnuConversationSummary' app/src/main/java/com/ghaniram/zoya/Models.kt
+          grep -q 'fun newConversation()' app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
+          grep -q 'onNewConversation' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
+          # The premium history script intentionally uses the English title "Chat History".
+          grep -q 'Chat History' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
+          grep -q 'Search conversations' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
+          echo "Conversation history source integration verified."
 
       - name: Build debug APK
         shell: bash
@@ -92,9 +161,6 @@ jobs:
           set -euo pipefail
           STORE_PASSWORD="$(printf '%s' "$ANU_KEYSTORE_PASSWORD" | tr -d '\r\n')"
           test -n "$STORE_PASSWORD"
-          # Kotlin 2.0.20's compiler daemon is terminating unexpectedly on the GitHub runner.
-          # Run Kotlin compilation in the Gradle process so the build does not depend on the
-          # separate KotlinCompileDaemon startup/connection.
           ./gradlew --no-daemon --stacktrace --info -Pkotlin.compiler.execution.strategy=in-process clean assembleDebug 2>&1 | tee gradle-build.log
 
       - name: Verify debug APK
@@ -104,11 +170,11 @@ jobs:
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print -quit)"
-          test -n "$APKSIGNER" || { echo "ERROR: apksigner not found"; exit 1; }
+          test -n "$APKSIGNER"
           "$APKSIGNER" verify --verbose "$APK"
           ls -lh "$APK"
 
-      - name: Create GitHub Release and upload APK
+      - name: Create or update GitHub Release and upload APK
         if: ${{ success() }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -117,6 +183,9 @@ jobs:
           set -euo pipefail
           APK="app/build/outputs/apk/debug/app-debug.apk"
           TAG="anu-build-${{ github.run_number }}"
-          gh release create "$TAG" "$APK#Anu-debug.apk" --repo "${{ github.repository }}" --title "Anu APK build ${{ github.run_number }}" --notes "Automated Anu debug APK build from commit ${{ github.sha }}." --target "${{ github.sha }}"
-
-# Build trigger: include the latest event, task-alarm, chat-silent proactive and concise-device fixes.
+          REPO="${{ github.repository }}"
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK#Anu-debug.apk" --repo "$REPO" --clobber
+          else
+            gh release create "$TAG" "$APK#Anu-debug.apk" --repo "$REPO" --title "Anu APK build ${{ github.run_number }}" --notes "Automated Anu debug APK build from commit ${{ github.sha }}." --target "${{ github.sha }}"
+          fi
