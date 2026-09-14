@@ -2,6 +2,9 @@ package com.ghaniram.zoya
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.Context
+import android.content.ClipboardManager
+import android.content.ClipData
 import android.graphics.Bitmap
 import android.graphics.Path
 import android.graphics.Rect
@@ -22,8 +25,11 @@ class AccessibilityControlService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         TouchGuardRuntime.onAccessibilityEvent(this, event)
         if (event == null) return
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            AutonomousScreenHelpManager.onWindowStateChanged(this, event.packageName?.toString().orEmpty())
+        when (event.eventType) {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                val pkg = event.packageName?.toString() ?: rootInActiveWindow?.packageName?.toString()
+                if (!pkg.isNullOrBlank()) ProactiveEventEngine.onForegroundAppChanged(applicationContext, pkg)
+            }
         }
     }
     override fun onInterrupt() = Unit
@@ -168,8 +174,8 @@ class AccessibilityControlService : AccessibilityService() {
     }
 
     fun pasteTextToNode(node: AccessibilityNodeInfo, value: String): Boolean = try {
-        val clipboard = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
-        val clip = android.content.ClipData.newPlainText("Anu text", value)
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        val clip = ClipData.newPlainText("Anu text", value)
         clipboard?.setPrimaryClip(clip)
         node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
     } catch (_: Exception) { false }

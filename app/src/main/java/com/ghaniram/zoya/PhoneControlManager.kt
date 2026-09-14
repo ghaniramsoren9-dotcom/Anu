@@ -170,7 +170,7 @@ class PhoneControlManager(private val app: Application) {
         if (knownPkg != null && launchPackage(pm, knownPkg)) return "opened $appName"
         val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val matches = try { pm.queryIntentActivities(launcherIntent, PackageManager.MATCH_ALL) } catch (_: Exception) { emptyList() }
-        val exact = matches.firstOrNull { normalize(it.loadLabel(pm).toString()) == wanted }
+        val exact = matches.firstOrNull { normalize(it.loadLabel(pm).toString()) == normalize(target) }
         val fuzzy = exact ?: matches.firstOrNull { info -> val lbl = normalize(info.loadLabel(pm).toString()); lbl.contains(normalize(target)) || normalize(target).contains(lbl) }
         if (fuzzy != null) {
             val launch = pm.getLaunchIntentForPackage(fuzzy.activityInfo.packageName)

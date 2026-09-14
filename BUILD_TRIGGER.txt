@@ -1,6 +1,6 @@
-Fix build: restore complete MainActivity conversation history injection and compile verification
+Fix build: resolve AutonomousScreenHelpManager and wanted symbol references in Accessibility and PhoneControl
 
-- Restored full conversation history dialog injection in apply_conversation_history.py
-- Preserved all grep anchors (AnuConversationSummary, fun newConversation(), onNewConversation, Chat History, Search conversations)
-- Verified flawless multi-step pipeline integration and balanced braces
-- Retained GitHubConnectorClient, persistent tokens, advanced coding models, and lossless typing
+- Fixed onAccessibilityEvent in AccessibilityControlService: route window/content state changes to ProactiveEventEngine.onForegroundAppChanged
+- Fixed unresolved reference 'wanted' in PhoneControlManager openApp to normalize(target)
+- Added explicit ClipboardManager and ClipData imports to AccessibilityControlService
+- Preserved complete conversation history, GitHub connector client, coding sub-agents, and lossless typing
