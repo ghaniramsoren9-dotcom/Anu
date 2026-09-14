@@ -115,8 +115,8 @@ if p_phone.exists():
     new_open_app = """fun openApp(appName: String): String {
         if (appName.isBlank()) return "app name is missing"
         val clean = appName.trim().lowercase()
-            .replace(Regex("^(open|launch|start|run|ଖୋଲ|khola|kholo)\\\\s+"), "")
-            .replace(Regex("\\\\s+(open|kholo|khola|ଖୋଲ|app)$"), "")
+            .replace(Regex("^(open|launch|start|run|ଖୋଲ|khola|kholo)[ \\t]+"), "")
+            .replace(Regex("[ \\t]+(open|kholo|khola|ଖୋଲ|app)$"), "")
             .trim()
         val target = if (clean.isNotBlank()) clean else appName.trim().lowercase()
         val pm = app.packageManager
@@ -243,13 +243,13 @@ if "private fun splitConversations(" not in s:
     fun cleanAnuReply(raw: String): String {
         if (raw.isBlank()) return ""
         var res = raw
-        res = res.replace(Regex("<thought>[\\\\s\\\\S]*?</thought>", RegexOption.IGNORE_CASE), "")
+        res = res.replace(Regex("<thought>.*?</thought>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
         res = res.replace(Regex("<tone[;:][^>]+>", RegexOption.IGNORE_CASE), "")
         res = res.replace(Regex("<(emotion|style|mood|gesture|action)[;:][^>]+>", RegexOption.IGNORE_CASE), "")
         res = res.replace(Regex("<[a-zA-Z0-9_-]+[;:][^>]+>", RegexOption.IGNORE_CASE), "")
         res = res.replace(Regex("</?(whisper|sigh|gasp|laughter|chuckle|pause)>", RegexOption.IGNORE_CASE), "")
         res = res.replace(Regex("\\\\[(SYSTEM ACTION|DIRECT ACTION|ACTION|TOOL)[^\\\\]]*\\\\]", RegexOption.IGNORE_CASE), "")
-        res = res.replace(Regex("^(Anu|Assistant|You)\\\\s*:\\\\s*", RegexOption.IGNORE_CASE), "")
+        res = res.replace(Regex("^(Anu|Assistant|You)[ \\t]*:[ \\t]*", RegexOption.IGNORE_CASE), "")
         return res.trim()
     }
 
@@ -560,7 +560,7 @@ if "val currentHour = remember { Calendar.getInstance().get(Calendar.HOUR_OF_DAY
 if "cleanAnuReply(msg.text)" not in s:
     s = s.replace(
         'val cleanText = msg.text.removePrefix("You:").removePrefix("You :").trim()',
-        'val cleanText = if (msg.role == ChatRole.ANU) cleanAnuReply(msg.text) else msg.text.removePrefix("You:").removePrefix("You :").trim()',
+        'val cleanText = if (msg.role == ChatRole.ANU) ZoyaSessionManager.cleanAnuReply(msg.text) else msg.text.removePrefix("You:").removePrefix("You :").trim()',
         1
     )
 
@@ -584,6 +584,10 @@ if "onNewConversation = { viewModel.newConversation() }" not in s:
                             onSelectConversation = { id -> viewModel.selectConversation(id) },
                             onVoiceClick = {""", 1
     )
+
+if "fun cleanAnuReply(" not in s:
+    clean_anu_helper = "fun cleanAnuReply(raw: String): String = ZoyaSessionManager.cleanAnuReply(raw)\n\n"
+    s = s.replace("fun AnuChatScreen(", clean_anu_helper + "fun AnuChatScreen(", 1)
 
 if "onNewConversation: () -> Unit" not in s:
     s = s.replace(
@@ -755,27 +759,6 @@ if "Saved conversations" not in s:
 
 """ + dialog_conv_list + """                    if (filteredMessages.isEmpty()) {""", 1
     )
-
-
-# Append cleanAnuReply helper function to MainActivity.kt
-if "fun cleanAnuReply(" not in s:
-    clean_impl = """
-
-// Clean tone tags and unnecessary directives from Anu replies
-fun cleanAnuReply(raw: String): String {
-    if (raw.isBlank()) return ""
-    var res = raw
-    res = res.replace(Regex("<thought>[\\\\s\\\\S]*?</thought>", RegexOption.IGNORE_CASE), "")
-    res = res.replace(Regex("<tone[;:][^>]+>", RegexOption.IGNORE_CASE), "")
-    res = res.replace(Regex("<(emotion|style|mood|gesture|action)[;:][^>]+>", RegexOption.IGNORE_CASE), "")
-    res = res.replace(Regex("<[a-zA-Z0-9_-]+[;:][^>]+>", RegexOption.IGNORE_CASE), "")
-    res = res.replace(Regex("</?(whisper|sigh|gasp|laughter|chuckle|pause)>", RegexOption.IGNORE_CASE), "")
-    res = res.replace(Regex("\\\\[(SYSTEM ACTION|DIRECT ACTION|ACTION|TOOL)[^\\\\]]*\\\\]", RegexOption.IGNORE_CASE), "")
-    res = res.replace(Regex("^(Anu|Assistant|You)\\\\s*:\\\\s*", RegexOption.IGNORE_CASE), "")
-    return res.trim()
-}
-"""
-    s = s.rstrip() + "\\n" + clean_impl
 
 p_main.write_text(s, encoding="utf-8")
 print("MainActivity updated with clean, soft, minimized chat & history section")
