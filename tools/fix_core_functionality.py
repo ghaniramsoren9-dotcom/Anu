@@ -6,6 +6,7 @@ MAIN = ROOT / "MainActivity.kt"
 PHONE = ROOT / "PhoneControlManager.kt"
 SESSION = ROOT / "ZoyaSessionManager.kt"
 
+# This script is also used as an idempotent repair guard by the build workflow.
 
 def replace_once(path, old, new, label):
     s = path.read_text(encoding="utf-8")
@@ -67,8 +68,6 @@ SESSION.write_text(s, encoding="utf-8")
 
 # 4) History UI: keep the complete persisted list in chronological order and
 # avoid accidental UI-side truncation if an earlier generator inserted one.
-# Storage remains bounded by the repository's explicit persistence policy, but
-# the UI must never take only a small recent slice.
 s = MAIN.read_text(encoding="utf-8")
 s2 = re.sub(r'val filteredMessages = remember\(messages, searchQuery\) \{\s*if \(searchQuery\.isBlank\(\)\) messages\s*else messages\.filter', 'val filteredMessages = remember(messages, searchQuery) {\n        val orderedMessages = messages.sortedBy { it.timestampMillis }\n        if (searchQuery.isBlank()) orderedMessages\n        else orderedMessages.filter', s, count=1)
 if s2 != s:
