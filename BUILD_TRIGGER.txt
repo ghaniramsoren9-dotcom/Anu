@@ -1,6 +1,1 @@
-Fix build: resolve AutonomousScreenHelpManager and wanted symbol references in Accessibility and PhoneControl
-
-- Fixed onAccessibilityEvent in AccessibilityControlService: route window/content state changes to ProactiveEventEngine.onForegroundAppChanged
-- Fixed unresolved reference 'wanted' in PhoneControlManager openApp to normalize(target)
-- Added explicit ClipboardManager and ClipData imports to AccessibilityControlService
-- Preserved complete conversation history, GitHub connector client, coding sub-agents, and lossless typing
+Add compile diagnostic capture hook in repair_compile.py
