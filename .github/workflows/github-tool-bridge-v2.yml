@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Apply GitHub tool bridge
         env:
-          PATCH_B64: cHJvbSBwYXRoX2xpYgppbXBvcnQgdGV4dHd...REPLACEME
+          PATCH_B64: Zm9ybSBwYXRoX2xpYgoKaW1wb3J0IHRleHR3cmFwCg==
         run: |
           echo "$PATCH_B64" | base64 -d > /tmp/patch.py
           python3 /tmp/patch.py
