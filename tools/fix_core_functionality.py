@@ -1,10 +1,27 @@
 from pathlib import Path
 import re
+import subprocess
 
 ROOT = Path("app/src/main/java/com/ghaniram/zoya")
 MAIN = ROOT / "MainActivity.kt"
 PHONE = ROOT / "PhoneControlManager.kt"
 SESSION = ROOT / "ZoyaSessionManager.kt"
+
+# Restore the last known complete MainActivity source before applying any
+# targeted repairs. Earlier repair workflows accidentally replaced/truncated
+# this file; using git history here makes the repair deterministic.
+KNOWN_GOOD_MAIN = "f8eec1057d55ea87f693a17534cb349c26011b8a"
+try:
+    restored = subprocess.check_output(
+        ["git", "show", f"{KNOWN_GOOD_MAIN}:app/src/main/java/com/ghaniram/zoya/MainActivity.kt"],
+        text=True,
+    )
+    if "class MainActivity : ComponentActivity()" not in restored:
+        raise RuntimeError("known-good MainActivity source is incomplete")
+    MAIN.write_text(restored, encoding="utf-8")
+    print("restored MainActivity from known-good commit", KNOWN_GOOD_MAIN)
+except Exception as exc:
+    raise SystemExit(f"ERROR: could not restore known-good MainActivity: {exc}")
 
 def replace_once(path, old, new, label):
     s = path.read_text(encoding="utf-8")
@@ -70,4 +87,11 @@ if s2 != s:
     MAIN.write_text(s2, encoding="utf-8")
     print("patched history ordering")
 
+# Final guard: never let this repair workflow commit a source containing the
+# compiler-incompatible modifier or a truncated MainActivity class.
+final_main = MAIN.read_text(encoding="utf-8")
+if ".focusable()" in final_main:
+    raise SystemExit("ERROR: incompatible focusable() modifier still present")
+if "class MainActivity : ComponentActivity()" not in final_main:
+    raise SystemExit("ERROR: MainActivity class missing after repair")
 print("core functionality repair complete")
