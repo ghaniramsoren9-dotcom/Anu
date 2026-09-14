@@ -28,10 +28,10 @@ jobs:
           changed = 0
           replacements = 0
 
-          # Kotlin normal strings only. Any single backslash that is not a
-          # Kotlin-supported escape is doubled so regex escapes such as \(,
-          # \), \d and \s remain valid at the Kotlin compiler level.
-          string_re = re.compile(r'"(?:\\\\.|[^"\\])*"')
+          # Match Kotlin ordinary string literals. A single backslash before
+          # an unsupported escape (for example \d, \w, \s or \() must be
+          # doubled so the intended regex escape reaches java.util.regex.
+          string_re = re.compile(r'"(?:\\.|[^"\\])*"')
 
           def repair_string(match):
               nonlocal replacements
@@ -61,6 +61,31 @@ jobs:
                   changed += 1
 
           print(f"Repaired {replacements} invalid Kotlin string escape(s) in {changed} file(s).")
+          PY
+
+      - name: Verify no invalid Kotlin escapes remain
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          valid = set("btnr'\"$\\")
+          string_re = re.compile(r'"(?:\\.|[^"\\])*"')
+          invalid = re.compile(r'(?<!\\)\\(?![btnr'"$\\u])')
+          bad = []
+          for path in Path("app/src/main/java").rglob("*.kt"):
+              text = path.read_text(encoding="utf-8")
+              for match in string_re.finditer(text):
+                  if invalid.search(match.group(0)):
+                      bad.append(str(path))
+                      break
+          if bad:
+              print("Invalid Kotlin string escapes remain:")
+              print("\n".join(bad))
+              raise SystemExit(1)
+          print("Kotlin escape verification passed.")
           PY
 
       - name: Commit repair if needed
