@@ -91,10 +91,13 @@ jobs:
           changed = 0
           replacements = 0
 
+          # Match a single literal backslash followed by s, but not an already escaped backslash.
+          invalid = re.compile(r"(?<!\\)\\s")
+          replacement = r"\\s"
+
           for path in root.rglob("*.kt"):
               text = path.read_text(encoding="utf-8")
-              fixed = text
-              fixed, count = re.subn(r"(?<!\\)\\s", r"\\\\s", fixed)
+              fixed, count = invalid.subn(replacement, text)
               replacements += count
               if fixed != text:
                   path.write_text(fixed, encoding="utf-8")
@@ -148,7 +151,6 @@ jobs:
           grep -q 'AnuConversationSummary' app/src/main/java/com/ghaniram/zoya/Models.kt
           grep -q 'fun newConversation()' app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
           grep -q 'onNewConversation' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
-          # The premium history script intentionally uses the English title "Chat History".
           grep -q 'Chat History' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
           grep -q 'Search conversations' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
           echo "Conversation history source integration verified."
