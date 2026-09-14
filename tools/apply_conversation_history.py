@@ -557,7 +557,7 @@ if "val currentHour = remember { Calendar.getInstance().get(Calendar.HOUR_OF_DAY
     s = s.replace(old_greeting, new_greeting, 1)
 
 # Clean displayed text in Chat message bubble (remove <tone:warm>)
-if "cleanAnuReply(msg.text)" not in s:
+if "ZoyaSessionManager.cleanAnuReply" not in s:
     s = s.replace(
         'val cleanText = msg.text.removePrefix("You:").removePrefix("You :").trim()',
         'val cleanText = if (msg.role == ChatRole.ANU) ZoyaSessionManager.cleanAnuReply(msg.text) else msg.text.removePrefix("You:").removePrefix("You :").trim()',
@@ -584,10 +584,6 @@ if "onNewConversation = { viewModel.newConversation() }" not in s:
                             onSelectConversation = { id -> viewModel.selectConversation(id) },
                             onVoiceClick = {""", 1
     )
-
-if "fun cleanAnuReply(" not in s:
-    clean_anu_helper = "fun cleanAnuReply(raw: String): String = ZoyaSessionManager.cleanAnuReply(raw)\n\n"
-    s = s.replace("fun AnuChatScreen(", clean_anu_helper + "fun AnuChatScreen(", 1)
 
 if "onNewConversation: () -> Unit" not in s:
     s = s.replace(

@@ -1,7 +1,4 @@
 Anu APK build fix:
-- Eliminate single-backslash \s escapes across ZoyaSessionManager, PhoneControlManager, and MainActivity
-- Fix LocalAnuColors.current.cardBackground and Icons.Outlined.ChatBubbleOutline in apply_premium_chat_history_ui.py
-- Align AnuChatHistoryDialog signature and callback scope in repair_compile.py
-- Dynamic time-based greeting on Home screen
-- Clean tone tags like <tone:warm> from Anu responses
-- Redesign Chat History UI matching design structure
+- Restore @Composable annotation on AnuChatScreen by removing misplaced clean_anu_helper insertion
+- Invoke ZoyaSessionManager.cleanAnuReply directly for Anu chat bubbles
+- Ensure zero unescaped regex whitespace escapes
