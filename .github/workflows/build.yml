@@ -59,9 +59,13 @@ jobs:
           git diff --check
       - name: Build debug APK
         shell: bash
+        env:
+          ANU_KEYSTORE_PASSWORD: ${{ secrets.ANU_KEYSTORE_PASSWORD }}
         run: |
           set -euo pipefail
           chmod +x gradlew
+          # Ensure password has no trailing CR/LF (same as keystore validation step)
+          export ANU_KEYSTORE_PASSWORD="$(printf '%s' "$ANU_KEYSTORE_PASSWORD" | tr -d '\r\n')"
           ./gradlew --no-daemon --stacktrace --info -Pkotlin.compiler.execution.strategy=in-process clean assembleDebug 2>&1 | tee gradle-build.log
       - name: Verify debug APK
         shell: bash
