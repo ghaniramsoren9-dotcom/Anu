@@ -267,6 +267,14 @@ fun AnuMainScreen(
     }
 }
 
+private fun anuTimeGreeting(hour: Int): String = when (hour) {
+    in 5..11 -> "Good morning"
+    in 12..16 -> "Good afternoon"
+    in 17..20 -> "Good evening"
+    else -> "Good night"
+}
+
+
 // -------------------------------------------------------------
 // 1. HOME SCREEN
 // -------------------------------------------------------------
@@ -280,6 +288,16 @@ fun AnuHomeScreen(
 ) {
     var searchInput by remember { mutableStateOf("") }
     val isConnected = state.connectionState != ConnectionState.DISCONNECTED
+    val context = LocalContext.current
+    val settingsStore = remember { AnuSettingsStore.getInstance(context) }
+    val userName = settingsStore.userName.trim().ifBlank { "Ghaniram" }
+    var currentHour by remember { mutableIntStateOf(Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+            delay(30_000L)
+        }
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -298,7 +316,7 @@ fun AnuHomeScreen(
                 horizontalAlignment = Alignment.Start
             ) {
                 Text(
-                    text = "Good morning, Ghaniram 👋",
+                    text = "${anuTimeGreeting(currentHour)}, $userName 👋",
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
                     color = AnuTextDark,
@@ -409,7 +427,7 @@ fun AnuHomeScreen(
                                     searchInput = ""
                                 }
                             }),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth().focusable()
                         )
                     }
 
@@ -1384,8 +1402,9 @@ fun AnuChatHistoryDialog(
     var showConfirmClear by remember { mutableStateOf(false) }
 
     val filteredMessages = remember(messages, searchQuery) {
-        if (searchQuery.isBlank()) messages
-        else messages.filter { it.text.contains(searchQuery, ignoreCase = true) }
+        val orderedMessages = messages.sortedBy { it.timestampMillis }
+        if (searchQuery.isBlank()) orderedMessages
+        else orderedMessages.filter { it.text.contains(searchQuery, ignoreCase = true) }
     }
 
     val timeFormatter = remember {
