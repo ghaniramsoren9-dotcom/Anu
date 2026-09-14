@@ -1,4 +1,4 @@
-import re
+import re, subprocess
 from pathlib import Path
 
 ROOT = Path("app/src/main/java/com/ghaniram/zoya")
@@ -58,3 +58,23 @@ if main.exists():
 
     main.write_text(m, encoding="utf-8")
     print("repair_compile.py completed")
+
+# Diagnostic check
+try:
+    res = subprocess.run(["./gradlew", "assembleDebug", "--stacktrace"], capture_output=True, text=True)
+    if res.returncode != 0:
+        print("=== ASSEMBLE FAILED IN repair_compile.py ===")
+        all_lines = (res.stdout + "\n" + res.stderr).splitlines()
+        e_lines = [l for l in all_lines if l.strip().startswith("e:") or "error:" in l.lower() or "exception" in l.lower() or "failed" in l.lower()]
+        summary = "\n".join(e_lines[:50])
+        error_log = f"Exit code: {res.returncode}\n\nERRORS:\n{summary}\n\nFULL_STDOUT_TAIL:\n{res.stdout[-3000:]}\n\nFULL_STDERR_TAIL:\n{res.stderr[-3000:]}"
+        with open("COMPILE_ERROR.txt", "w") as f:
+            f.write(error_log)
+        subprocess.run(["git", "config", "user.name", "github-actions[bot]"])
+        subprocess.run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"])
+        subprocess.run(["git", "checkout", "-B", "ci-compile-error"])
+        subprocess.run(["git", "add", "COMPILE_ERROR.txt"])
+        subprocess.run(["git", "commit", "-m", "ci: capture compilation error log"])
+        subprocess.run(["git", "push", "-f", "origin", "ci-compile-error"])
+except Exception as e:
+    print("Diagnostic hook error:", e)
