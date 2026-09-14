@@ -1,4 +1,5 @@
-Anu APK build fix:
-- Restore @Composable annotation on AnuChatScreen by removing misplaced clean_anu_helper insertion
-- Invoke ZoyaSessionManager.cleanAnuReply directly for Anu chat bubbles
-- Ensure zero unescaped regex whitespace escapes
+feat: fix Connectors with GitHub integration, add Sub-Agents coding models, and upgrade typing for long code and notes
+
+- Connectors: add persistent token management, GitHub PAT authentication, repo/commit integration, and secure credential wipe on disconnect
+- Sub-Agents: add leading coding models (Claude 3.7 Sonnet, DeepSeek R1, Qwen 2.5 Coder, Gemini 2.5 Pro, o3-mini) and persistent custom providers with presets
+- Typing & Accessibility: eliminate destructive auto-submit/search clicks in editors, enable lossless clipboard paste fallback for long text/code, and add writeCode & writeNote execution

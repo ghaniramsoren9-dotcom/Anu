@@ -1,26 +1,23 @@
+import os, re
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
-PKG = ROOT / "app/src/main/java/com/ghaniram/zoya"
+APP = ROOT / "app"
+PKG = APP / "src/main/java/com/ghaniram/zoya"
 
-def replace_once(text, old, new, label):
-    if old not in text:
-        raise SystemExit(f"Required source anchor not found: {label}")
-    return text.replace(old, new, 1)
+print("Running apply_conversation_history.py...")
 
-# 1. AndroidManifest.xml: package visibility for querying and opening apps
-p_manifest = ROOT / "app/src/main/AndroidManifest.xml"
-if p_manifest.exists():
-    s = p_manifest.read_text(encoding="utf-8")
-    if "android.permission.QUERY_ALL_PACKAGES" not in s:
-        s = re.sub(
-            r'(<uses-permission\s+android:name="android\.permission\.BLUETOOTH_CONNECT"\s*/>)',
-            r'<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />\n    \1',
-            s, count=1
+# 1. Update AndroidManifest.xml if needed
+manifest = APP / "src/main/AndroidManifest.xml"
+if manifest.exists():
+    s = manifest.read_text(encoding="utf-8")
+    if "QUERY_ALL_PACKAGES" not in s:
+        s = s.replace(
+            "<application",
+            '    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />\n    <application'
         )
-    p_manifest.write_text(s, encoding="utf-8")
-    print("Manifest updated with QUERY_ALL_PACKAGES")
+        manifest.write_text(s, encoding="utf-8")
+        print("Manifest updated with QUERY_ALL_PACKAGES")
 
 # 2. AccessibilityControlService.kt: screen-level scroll gesture fallback
 p_acc = PKG / "AccessibilityControlService.kt"
@@ -96,27 +93,85 @@ if p_phone.exists():
             return if (normalized in listOf("home", "gohome", "homescreen")) goHome()
             else "Anu phone-control accessibility is not enabled. Open Accessibility settings and enable Anu."
         }
+        val textToType = if (value.isNotBlank()) value else text
         val ok = when (normalized) {
             "home", "gohome", "back", "goback", "recents", "recentapps", "openrecentapps", "notifications", "opennotifications", "quicksettings", "openquicksettings", "power", "powerdialog", "lock", "lockscreen" -> service.globalAction(action)
             "click", "clicktext" -> service.clickByText(text)
             "longclick", "longclicktext" -> service.clickByText(text, longClick = true)
-            "settext", "settextbytext" -> service.setTextByText(text, value)
-            "typetext", "type" -> service.typeText(value)
+            "settext", "settextbytext" -> service.setTextByText(text, textToType)
+            "typetext", "type", "write", "writetext", "paste", "pastetext", "entertext", "typenote", "typecode", "input", "insert" -> {
+                service.typeText(textToType)
+            }
             "scroll", "scrollforward", "scrolldown", "down", "swipedown", "swipeup" -> service.scroll(true)
             "scrollbackward", "scrollup", "up" -> service.scroll(false)
             else -> false
         }
-        val suffix = if (text.isNotBlank()) " on $text" else ""
+        val suffix = if (text.isNotBlank() && normalized !in listOf("typetext", "type", "write", "writetext", "paste", "pastetext", "settext", "settextbytext")) " on $text" else ""
         return if (ok) "completed $action" else "could not complete $action$suffix"
     }
+
+    fun writeNote(title: String, content: String, appName: String = "keep"): String {
+        val fullText = if (title.isNotBlank()) "$title\n\n$content" else content
+        try {
+            val clipboard = app.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            clipboard?.setPrimaryClip(ClipData.newPlainText(title.ifBlank { "Note" }, fullText))
+        } catch (_: Exception) {}
+
+        val service = AccessibilityControlService.instance
+        if (service != null) {
+            val typed = service.typeText(fullText)
+            if (typed) return "Note typed into active editor (${fullText.length} characters)"
+        }
+
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, title)
+            putExtra(Intent.EXTRA_TEXT, fullText)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return try {
+            app.startActivity(Intent.createChooser(intent, "Save Note with Anu").apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+            "Note copied to clipboard and sharing opened: '$title' (${fullText.length} characters)"
+        } catch (_: Exception) {
+            "Note copied to clipboard (${fullText.length} characters): '$title'"
+        }
+    }
+
+    fun writeCode(code: String, filename: String = "", language: String = ""): String {
+        val cleanCode = code.trim()
+        if (cleanCode.isEmpty()) return "Code content is empty"
+
+        try {
+            val clipboard = app.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            clipboard?.setPrimaryClip(ClipData.newPlainText(filename.ifBlank { "Code" }, cleanCode))
+        } catch (_: Exception) {}
+
+        val service = AccessibilityControlService.instance
+        if (service != null) {
+            val pasted = service.typeText(cleanCode)
+            if (pasted) return "Code written into active editor (${cleanCode.length} characters)"
+        }
+        return "Complete code generated and copied to clipboard (${cleanCode.length} characters)"
+    }
+
+    fun githubAction(action: String, repo: String = "", path: String = "", content: String = "", message: String = ""): String {
+        val store = AnuSettingsStore.getInstance(app)
+        val token = store.githubToken
+        if (token.isBlank()) {
+            return "GitHub is not connected yet. Please connect your GitHub account in Anu Settings > Connectors."
+        }
+        val targetRepo = if (repo.isNotBlank()) repo else store.githubDefaultRepo
+        return GitHubConnectorClient.executeAction(token, action, targetRepo, path, content, message)
+    }
+
     fun openAccessibilitySettings"""
-    s = re.sub(r'fun accessibilityAction\(action: String.*?\n\s*fun openAccessibilitySettings', new_acc_action, s, count=1, flags=re.DOTALL)
+    s = re.sub(r'fun accessibilityAction\(action: String.*?\n    fun openAccessibilitySettings', new_acc_action, s, count=1, flags=re.DOTALL)
 
     new_open_app = """fun openApp(appName: String): String {
         if (appName.isBlank()) return "app name is missing"
         val clean = appName.trim().lowercase()
-            .replace(Regex("^(open|launch|start|run|ଖୋଲ|khola|kholo)[ \\t]+"), "")
-            .replace(Regex("[ \\t]+(open|kholo|khola|ଖୋଲ|app)$"), "")
+            .replace(Regex("^(open|launch|start|run|ଖୋଲ|khola|kholo)\\\\s+"), "")
+            .replace(Regex("\\\\s+(open|kholo|khola|ଖୋଲ|app)$"), "")
             .trim()
         val target = if (clean.isNotBlank()) clean else appName.trim().lowercase()
         val pm = app.packageManager
@@ -168,9 +223,8 @@ if p_phone.exists():
             return try { app.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("whatsapp://send")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "opened WhatsApp" } catch (_: Exception) { "could not open WhatsApp" }
         }
         return "could not find or open app: $appName"
-    }
-    private fun launchPackage"""
-    s = re.sub(r'fun openApp\(appName: String\): String\s*\{.*?\n\s*private fun launchPackage', new_open_app, s, count=1, flags=re.DOTALL)
+    }"""
+    s = re.sub(r'fun openApp\(appName: String\): String\s*\{.*?\n    private fun launchPackage', new_open_app, s, count=1, flags=re.DOTALL)
 
     p_phone.write_text(s, encoding="utf-8")
     print("PhoneControlManager updated with goHome, openApp, and accessibilityAction")
@@ -179,46 +233,47 @@ if p_phone.exists():
 p_live = PKG / "GeminiLiveClient.kt"
 if p_live.exists():
     s = p_live.read_text(encoding="utf-8")
-    old_send_text = 'enqueueOrSend(JSONObject().put("realtimeInput", JSONObject().put("text", text)).toString())'
-    new_send_text = 'val msg = JSONObject().put("clientContent", JSONObject().apply { put("turns", JSONArray().put(JSONObject().apply { put("role", "user"); put("parts", JSONArray().put(JSONObject().put("text", text))) })); put("turnComplete", true) }); enqueueOrSend(msg.toString())'
-    if old_send_text in s:
-        s = s.replace(old_send_text, new_send_text, 1)
+    old_client_send = """        val textPart = JSONObject().put("text", text)
+        val msg = JSONObject().put("realtimeInput", JSONObject().put("mediaChunks", JSONArray().put(textPart)))"""
+    new_client_send = """        val textPart = JSONObject().put("text", text)
+        val msg = JSONObject().put("clientContent", JSONObject().put("turns", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(textPart)))).put("turnComplete", true))"""
+    if old_client_send in s:
+        s = s.replace(old_client_send, new_client_send)
         p_live.write_text(s, encoding="utf-8")
         print("GeminiLiveClient sendText updated")
 
-# 5. Models.kt: persistent conversation metadata
+# 5. Models.kt: add AnuConversationSummary
 p_models = PKG / "Models.kt"
-s = p_models.read_text(encoding="utf-8")
-if "data class AnuConversationSummary" not in s:
-    s = s.replace("enum class ChatRole { USER, ANU, SYSTEM }\n", """enum class ChatRole { USER, ANU, SYSTEM }
-
-data class AnuConversationSummary(
+if p_models.exists():
+    s = p_models.read_text(encoding="utf-8")
+    if "data class AnuConversationSummary" not in s:
+        summary_model = """data class AnuConversationSummary(
     val id: String,
     val title: String,
     val messageCount: Int,
     val updatedAt: Long,
-    val snippet: String = ""
+    val snippet: String
 )
-""", 1)
-if "val chatConversations: List<AnuConversationSummary>" not in s:
-    s = s.replace("    val chatMessages: List<ChatMessage> = emptyList(),\n", """    val chatMessages: List<ChatMessage> = emptyList(),
-    val chatConversations: List<AnuConversationSummary> = emptyList(),
-    val activeConversationId: String = "",
-""", 1)
-p_models.write_text(s, encoding="utf-8")
-print("Models.kt verified with AnuConversationSummary")
 
-# 6. ZoyaSessionManager.kt: full direct action handling and conversation management
-p_sm = PKG / "ZoyaSessionManager.kt"
-s = p_sm.read_text(encoding="utf-8")
-if "CONVERSATION_MARKER" not in s:
-    s = s.replace("    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())\n", """    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private const val CONVERSATION_MARKER = "__ANU_CONVERSATION__"
+"""
+        s = summary_model + s
+        if "val chatConversations: List<AnuConversationSummary>" not in s:
+            s = s.replace(
+                "val chatMessages: List<ChatMessage> = emptyList(),",
+                "val chatMessages: List<ChatMessage> = emptyList(),\n    val chatConversations: List<AnuConversationSummary> = emptyList(),\n    val activeConversationId: String = \"default\","
+            )
+        p_models.write_text(s, encoding="utf-8")
+        print("Models.kt updated with AnuConversationSummary")
+
+# 6. ZoyaSessionManager.kt: conversations, direct action, tone cleanup, executeTool
+p_session = PKG / "ZoyaSessionManager.kt"
+if p_session.exists():
+    s = p_session.read_text(encoding="utf-8")
+    
+    # Helper functions
+    helpers = """    private const val CONVERSATION_MARKER = "__ANU_CONVERSATION__"
     private const val ACTIVE_CONVERSATION_PREF = "active_conversation_id"
-""", 1)
-
-if "private fun splitConversations(" not in s:
-    helper = """    private fun conversationMarker(id: String) = ChatMessage(UUID.randomUUID().toString(), ChatRole.SYSTEM, "$CONVERSATION_MARKER|$id", System.currentTimeMillis())
+    private fun conversationMarker(id: String) = ChatMessage(UUID.randomUUID().toString(), ChatRole.SYSTEM, "$CONVERSATION_MARKER|$id", System.currentTimeMillis())
 
     private fun parseConversationId(message: ChatMessage): String? {
         if (message.role != ChatRole.SYSTEM || !message.text.startsWith("$CONVERSATION_MARKER|")) return null
@@ -243,13 +298,13 @@ if "private fun splitConversations(" not in s:
     fun cleanAnuReply(raw: String): String {
         if (raw.isBlank()) return ""
         var res = raw
-        res = res.replace(Regex("<thought>.*?</thought>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
+        res = res.replace(Regex("<thought>[\\\\s\\\\S]*?</thought>", RegexOption.IGNORE_CASE), "")
         res = res.replace(Regex("<tone[;:][^>]+>", RegexOption.IGNORE_CASE), "")
         res = res.replace(Regex("<(emotion|style|mood|gesture|action)[;:][^>]+>", RegexOption.IGNORE_CASE), "")
         res = res.replace(Regex("<[a-zA-Z0-9_-]+[;:][^>]+>", RegexOption.IGNORE_CASE), "")
         res = res.replace(Regex("</?(whisper|sigh|gasp|laughter|chuckle|pause)>", RegexOption.IGNORE_CASE), "")
         res = res.replace(Regex("\\\\[(SYSTEM ACTION|DIRECT ACTION|ACTION|TOOL)[^\\\\]]*\\\\]", RegexOption.IGNORE_CASE), "")
-        res = res.replace(Regex("^(Anu|Assistant|You)[ \\t]*:[ \\t]*", RegexOption.IGNORE_CASE), "")
+        res = res.replace(Regex("^(Anu|Assistant|You)\\\\s*:\\\\s*", RegexOption.IGNORE_CASE), "")
         return res.trim()
     }
 
@@ -340,87 +395,22 @@ if "private fun splitConversations(" not in s:
     }
 
 """
-    s = s.replace("    fun setLanguage(lang: ZoyaLanguage) {", helper + "    fun setLanguage(lang: ZoyaLanguage) {", 1)
+    if "CONVERSATION_MARKER" not in s:
+        s = re.sub(r'object ZoyaSessionManager\s*\{', 'object ZoyaSessionManager {\n' + helpers, s, count=1)
 
-# Direct command execution in sendText
-if "tryExecuteDirectAction" in s and "val directResult = tryExecuteDirectAction(clean)" not in s:
-    new_send = '''val directResult = tryExecuteDirectAction(clean)
-        if (directResult != null) {
-            val userMsg = ChatMessage(UUID.randomUUID().toString(), ChatRole.USER, clean, System.currentTimeMillis())
-            val anuMsg = ChatMessage(UUID.randomUUID().toString(), ChatRole.ANU, directResult, System.currentTimeMillis() + 10L)
-            _state.update { it.copy(chatMessages = it.chatMessages + userMsg + anuMsg, isAnuResponding = false) }
-            scope.launch { repository.saveChatMessage(userMsg); repository.saveChatMessage(anuMsg) }
-            if (isConnected()) client?.sendText("[SYSTEM ACTION COMPLETED: $directResult] Acknowledge concisely to the user in ${_state.value.language.label}.")
-            return
-        }
-        val proactive = clean.startsWith("[PROACTIVE SYSTEM EVENT]")'''
-    s = s.replace('val proactive = clean.startsWith("[PROACTIVE SYSTEM EVENT]")', new_send, 1)
-
-# Clean tone tags in onModelText (e.g. <tone:warm>)
-if "val clean = cleanAnuReply" not in s:
-    old_model_handler = """            override fun onModelText(text: String) {
+    # Clean tone tags in onModelText (e.g. <tone:warm>)
+    if "val clean = cleanAnuReply" not in s:
+        old_model_handler = """            override fun onModelText(text: String) {
                 if (!isCurrentSession()) return
-                val clean = text.removePrefix("You:").removePrefix("You :").trim()
-                if (clean.isBlank()) return
-                val last = _state.value.chatMessages.lastOrNull()
-                if (last != null && last.id == currentAnuId && last.role == ChatRole.ANU) {
-                    val updated = last.copy(text = (last.text + " " + clean).trim())
-                    _state.update { s -> s.copy(chatMessages = s.chatMessages.dropLast(1) + updated, isAnuResponding = false) }
-                    scope.launch { repository.updateChatMessage(updated) }
-                } else {
-                    val id = UUID.randomUUID().toString()
-                    currentAnuId = id
-                    val msg = ChatMessage(id, ChatRole.ANU, clean, System.currentTimeMillis())
-                    _state.update { s -> s.copy(chatMessages = s.chatMessages + msg) }
-                    scope.launch { repository.saveChatMessage(msg) }
-                }
-            }"""
-    new_model_handler = """            override fun onModelText(text: String) {
+                val clean = text.removePrefix("You:").removePrefix("You :").trim()"""
+        new_model_handler = """            override fun onModelText(text: String) {
                 if (!isCurrentSession()) return
-                val clean = cleanAnuReply(text.removePrefix("You:").removePrefix("You :"))
-                if (clean.isBlank()) return
-                val last = _state.value.chatMessages.lastOrNull()
-                if (last != null && last.id == currentAnuId && last.role == ChatRole.ANU) {
-                    val merged = cleanAnuReply(last.text + " " + clean)
-                    val updated = last.copy(text = merged)
-                    _state.update { s -> s.copy(chatMessages = s.chatMessages.dropLast(1) + updated, isAnuResponding = false) }
-                    scope.launch { repository.updateChatMessage(updated) }
-                } else {
-                    val id = UUID.randomUUID().toString()
-                    currentAnuId = id
-                    val msg = ChatMessage(id, ChatRole.ANU, clean, System.currentTimeMillis())
-                    _state.update { s -> s.copy(chatMessages = s.chatMessages + msg) }
-                    scope.launch { repository.saveChatMessage(msg) }
-                }
-            }"""
-    if old_model_handler in s:
-        s = s.replace(old_model_handler, new_model_handler, 1)
+                val clean = cleanAnuReply(text.removePrefix("You:").removePrefix("You :"))"""
+        if old_model_handler in s:
+            s = s.replace(old_model_handler, new_model_handler, 1)
 
-# Clean prompt rule for tone tags
-clean_prompt_rule = " Output rule: Never include tone tags, emotion tags, angle bracket tags, or metadata like <tone:warm>, <tone:...>, or <whisper> in your output. Transcribe and speak purely the natural conversational reply text without any formatting tags."
-if clean_prompt_rule not in s:
-    s = s.replace('Respond naturally in $language.', f'Respond naturally in $language.{clean_prompt_rule}', 1)
-
-# Direct command execution in onUserText (speech transcription)
-if "tryExecuteDirectAction" in s and "val directResult = tryExecuteDirectAction(clean)" not in s[s.find("override fun onUserText"):s.find("override fun onModelText")]:
-    new_user_text = '''override fun onUserText(text: String) {
-                if (!isCurrentSession()) return
-                val clean = text.removePrefix("You:").removePrefix("You :").trim()
-                if (clean.isBlank()) return
-                ProactiveEventEngine.noteUserActivity()
-                val directResult = tryExecuteDirectAction(clean)
-                if (directResult != null) {
-                    val userMsg = ChatMessage(UUID.randomUUID().toString(), ChatRole.USER, clean, System.currentTimeMillis())
-                    val anuMsg = ChatMessage(UUID.randomUUID().toString(), ChatRole.ANU, directResult, System.currentTimeMillis() + 10L)
-                    _state.update { it.copy(chatMessages = it.chatMessages + userMsg + anuMsg, isAnuResponding = false) }
-                    scope.launch { repository.saveChatMessage(userMsg); repository.saveChatMessage(anuMsg) }
-                    client?.sendText("[SYSTEM ACTION COMPLETED: $directResult] Acknowledge concisely to the user in ${_state.value.language.label}.")
-                    return
-                }'''
-    s = re.sub(r'override fun onUserText\(text: String\)\s*\{.*?(?=ProactiveEventEngine\.noteUserActivity\(\))ProactiveEventEngine\.noteUserActivity\(\)', new_user_text, s, count=1, flags=re.DOTALL)
-
-# Comprehensive executeTool
-new_execute_tool = '''private fun executeTool(name: String, args: JSONObject): String = when (name) {
+    # Comprehensive executeTool
+    new_execute_tool = '''private fun executeTool(name: String, args: JSONObject): String = when (name) {
         "openWebsite" -> {
             val url = args.optString("url").trim()
             val label = args.optString("name", url)
@@ -464,220 +454,125 @@ new_execute_tool = '''private fun executeTool(name: String, args: JSONObject): S
             "Created task reminder for '$title' at $time"
         }
         "accessibilityAction" -> phoneControls.accessibilityAction(args.optString("action"), args.optString("text"), args.optString("value"))
+        "writeNote", "createNote", "takeNote" -> {
+            val title = args.optString("title").ifBlank { "Note" }
+            val content = args.optString("content").ifBlank { args.optString("text") }
+            phoneControls.writeNote(title, content)
+        }
+        "writeCode", "generateCode", "code", "createCode" -> {
+            val code = args.optString("code").ifBlank { args.optString("content") }.ifBlank { args.optString("text") }
+            val filename = args.optString("filename").ifBlank { args.optString("file") }
+            val language = args.optString("language").ifBlank { args.optString("lang") }
+            phoneControls.writeCode(code, filename, language)
+        }
+        "githubAction", "github", "githubCommit", "githubRepo" -> {
+            val action = args.optString("action").ifBlank { args.optString("command") }.lowercase().trim()
+            val repo = args.optString("repo").ifBlank { args.optString("repository") }.trim()
+            val path = args.optString("path").ifBlank { args.optString("file") }.trim()
+            val content = args.optString("content").ifBlank { args.optString("code") }
+            val message = args.optString("message").ifBlank { "Commit from Anu" }
+            phoneControls.githubAction(action, repo, path, content, message)
+        }
+        "copyToClipboard", "clipboard" -> {
+            val text = args.optString("text").ifBlank { args.optString("content") }
+            val label = args.optString("label", "Copied Text")
+            try {
+                val cm = app.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                cm?.setPrimaryClip(ClipData.newPlainText(label, text))
+                "Copied to clipboard successfully"
+            } catch (e: Exception) {
+                "Could not copy to clipboard: ${e.message}"
+            }
+        }
         "readScreen" -> AccessibilityControlService.instance?.uiSnapshot() ?: "Screen reading is unavailable because Anu Accessibility is not enabled."
         "getDeviceInfo" -> { DeviceQueryContext.set(args.optString("query").ifBlank { _state.value.chatMessages.lastOrNull { it.role == ChatRole.USER }?.text.orEmpty() }); DeviceInfoProvider.snapshot(app) }
         else -> "Unknown tool: $name"
     }
     private fun buildToolDeclarations'''
 
-s = re.sub(r'private fun executeTool\(name: String, args: JSONObject\): String = when \(name\)\s*\{.*?\n\s*private fun buildToolDeclarations', new_execute_tool, s, count=1, flags=re.DOTALL)
+    s = re.sub(r'private fun executeTool\(name: String, args: JSONObject\): String = when \(name\)\s*\{.*?\n\s*private fun buildToolDeclarations', new_execute_tool, s, count=1, flags=re.DOTALL)
 
-old_instr = 'For camera selfie, ALWAYS call phoneAction(action=take_selfie);'
-new_instr = 'DEVICE FUNCTIONAL CONTROLS: When the user asks to open an app (e.g. YouTube, WhatsApp, Settings, Camera, Chrome), go home, scroll, or change system settings (volume, brightness, flashlight, Wi-Fi, Bluetooth), you MUST IMMEDIATELY call openApp, accessibilityAction, or phoneAction. For camera selfie, ALWAYS call phoneAction(action=take_selfie);'
-if old_instr in s:
-    s = s.replace(old_instr, new_instr, 1)
+    # Direct command execution in sendText
+    if "tryExecuteDirectAction" in s and "val directResult = tryExecuteDirectAction(clean)" not in s[s.find("fun sendText"):s.find("val proactive =")]:
+        old_send = """    fun sendText(text: String) {
+        ensureInitialized()
+        val clean = text.trim()
+        if (clean.isBlank()) return"""
+        new_send = """    fun sendText(text: String) {
+        ensureInitialized()
+        val clean = text.trim()
+        if (clean.isBlank()) return
 
-new_init = '''        val persisted = runBlocking(Dispatchers.IO) { repository.getAllChatMessages() }
-        val activeId = prefs.getString(ACTIVE_CONVERSATION_PREF, null) ?: UUID.randomUUID().toString()
-        prefs.edit().putString(ACTIVE_CONVERSATION_PREF, activeId).apply()
-        _state.value = ZoyaUiState(
-            language = language,
-            quote = idleQuotes[language]?.random().orEmpty(),
-            tasks = loadTasks(),
-            chatMessages = messagesForConversation(persisted, activeId),
-            chatConversations = conversationSummaries(persisted),
-            activeConversationId = activeId
+        val directResult = tryExecuteDirectAction(clean)
+        if (directResult != null) {
+            val userMsg = ChatMessage(UUID.randomUUID().toString(), ChatRole.USER, clean, System.currentTimeMillis())
+            val anuMsg = ChatMessage(UUID.randomUUID().toString(), ChatRole.ANU, directResult, System.currentTimeMillis() + 10L)
+            _state.update { it.copy(chatMessages = it.chatMessages + userMsg + anuMsg, isAnuResponding = false) }
+            scope.launch { repository.saveChatMessage(userMsg); repository.saveChatMessage(anuMsg) }
+            if (isConnected()) client?.sendText("[SYSTEM ACTION COMPLETED: $directResult] Acknowledge concisely to the user in ${_state.value.language.label}.")
+            return
+        }"""
+        if old_send in s:
+            s = s.replace(old_send, new_send, 1)
+
+    # Ensure repository load fills chatConversations
+    if "conversationSummaries(messages)" not in s:
+        s = s.replace(
+            "repository.allChatMessagesFlow.collect { messages -> _state.update { it.copy(chatMessages = messages) } }",
+            """repository.allChatMessagesFlow.collect { messages ->
+                val activeId = prefs.getString(ACTIVE_CONVERSATION_PREF, "default") ?: "default"
+                _state.update { it.copy(
+                    chatMessages = messagesForConversation(messages, activeId),
+                    chatConversations = conversationSummaries(messages),
+                    activeConversationId = activeId
+                ) }
+            }"""
         )
-        scope.launch { runCatching { repository.allMemoriesFlow.collect { memories -> _state.update { it.copy(memories = memories) } } } }
-        scope.launch { runCatching { repository.allChatMessagesFlow.collect { messages ->
-            val id = prefs.getString(ACTIVE_CONVERSATION_PREF, activeId) ?: activeId
-            _state.update { it.copy(chatMessages = messagesForConversation(messages, id), chatConversations = conversationSummaries(messages), activeConversationId = id) }
-        } } }'''
-old_init = '''        _state.value = ZoyaUiState(language = language, quote = idleQuotes[language]?.random().orEmpty(), tasks = loadTasks())
-        scope.launch { runCatching { repository.allMemoriesFlow.collect { memories -> _state.update { it.copy(memories = memories) } } } }
-        scope.launch { runCatching { repository.allChatMessagesFlow.collect { messages -> _state.update { it.copy(chatMessages = messages) } } } }'''
-if old_init in s:
-    s = s.replace(old_init, new_init, 1)
 
-p_sm.write_text(s, encoding="utf-8")
-print("ZoyaSessionManager updated")
+    p_session.write_text(s, encoding="utf-8")
+    print("ZoyaSessionManager.kt updated with conversation splits, direct actions, and tone cleanup")
 
-# 7. ZoyaViewModel.kt: facade methods
-p_vm = PKG / "ZoyaViewModel.kt"
-s = p_vm.read_text(encoding="utf-8")
-if "fun newConversation()" not in s:
-    s = s.replace("    fun clearMemories() = ZoyaSessionManager.clearMemories()\n", """    fun newConversation() = ZoyaSessionManager.newConversation()
-    fun selectConversation(id: String) = ZoyaSessionManager.selectConversation(id)
-    fun clearMemories() = ZoyaSessionManager.clearMemories()
-""", 1)
-p_vm.write_text(s, encoding="utf-8")
-print("ZoyaViewModel updated")
-
-# 8. MainActivity.kt: clean, soft, minimized chat & history UI
+# 7. MainActivity.kt: Add onNewConversation, selectConversation, conversation state to UI
 p_main = PKG / "MainActivity.kt"
-s = p_main.read_text(encoding="utf-8")
+if p_main.exists():
+    s = p_main.read_text(encoding="utf-8")
 
-# Dynamic Home greeting based on time of day
-if "val currentHour = remember { Calendar.getInstance().get(Calendar.HOUR_OF_DAY) }" not in s:
-    old_greeting = """            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
-                horizontalAlignment = Alignment.Start
-            ) {
-                Text(
-                    text = "Good morning, Ghaniram 👋",
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = AnuTextDark,
-                )"""
-    new_greeting = """            val context = LocalContext.current
-            val currentHour = remember { Calendar.getInstance().get(Calendar.HOUR_OF_DAY) }
-            val greeting = when (currentHour) {
-                in 4..11 -> "Good morning"
+    # Fix time-based greeting on Home Screen
+    old_greeting = """            val currentGreeting = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
+                in 5..11 -> "Good morning"
                 in 12..16 -> "Good afternoon"
                 in 17..21 -> "Good evening"
+                else -> "Good night"
+            }"""
+    new_greeting = """            val currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+            val currentGreeting = when {
+                currentHour in 5..11 -> "Good morning"
+                currentHour in 12..16 -> "Good afternoon"
+                currentHour in 17..21 -> "Good evening"
                 else -> "Good night"
             }
             val userName = remember(context) {
                 runCatching { AnuSettingsStore.getInstance(context).userName }.getOrNull()?.trim()?.ifBlank { "Ghaniram" } ?: "Ghaniram"
-            }
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
-                horizontalAlignment = Alignment.Start
-            ) {
-                Text(
-                    text = "$greeting, $userName 👋",
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = AnuTextDark,
-                )"""
-    s = s.replace(old_greeting, new_greeting, 1)
+            }"""
+    if old_greeting in s and "val currentHour" not in s:
+        s = s.replace(old_greeting, new_greeting, 1)
 
-# Clean displayed text in Chat message bubble (remove <tone:warm>)
-if "ZoyaSessionManager.cleanAnuReply" not in s:
-    s = s.replace(
-        'val cleanText = msg.text.removePrefix("You:").removePrefix("You :").trim()',
-        'val cleanText = if (msg.role == ChatRole.ANU) ZoyaSessionManager.cleanAnuReply(msg.text) else msg.text.removePrefix("You:").removePrefix("You :").trim()',
-        1
-    )
+    # Clean displayed text in Chat message bubble (remove <tone:warm>)
+    if "ZoyaSessionManager.cleanAnuReply" not in s:
+        s = s.replace(
+            'val cleanText = msg.text.removePrefix("You:").removePrefix("You :").trim()',
+            'val cleanText = if (msg.role == ChatRole.ANU) ZoyaSessionManager.cleanAnuReply(msg.text) else msg.text.removePrefix("You:").removePrefix("You :").trim()',
+            1
+        )
 
-if "var showHistoryView by rememberSaveable" not in s:
-    s = s.replace(
-        "    var showChatHistoryDialog by remember { mutableStateOf(false) }\n",
-        "    var showChatHistoryDialog by remember { mutableStateOf(false) }\n    var showHistoryView by rememberSaveable { mutableStateOf(false) }\n",
-        1
-    )
-
-if "onNewConversation = { viewModel.newConversation() }" not in s:
-    s = s.replace(
-        """                        AnuNavTab.CHAT -> AnuChatScreen(
-                            state = state,
-                            onSendMessage = { text -> viewModel.sendText(text) },
-                            onVoiceClick = {""",
-        """                        AnuNavTab.CHAT -> AnuChatScreen(
-                            state = state,
-                            onSendMessage = { text -> viewModel.sendText(text) },
-                            onNewConversation = { viewModel.newConversation() },
-                            onSelectConversation = { id -> viewModel.selectConversation(id) },
-                            onVoiceClick = {""", 1
-    )
-
-if "onNewConversation: () -> Unit" not in s:
-    s = s.replace(
-        """fun AnuChatScreen(
-    state: ZoyaUiState,
-    onSendMessage: (String) -> Unit,
-    onVoiceClick: () -> Unit,
-    onClearChat: () -> Unit
-) {""",
-        """fun AnuChatScreen(
-    state: ZoyaUiState,
-    onSendMessage: (String) -> Unit,
-    onNewConversation: () -> Unit,
-    onSelectConversation: (String) -> Unit,
-    onVoiceClick: () -> Unit,
-    onClearChat: () -> Unit
-) {""", 1
-    )
-
-# Soft, clean, minimal header buttons: History button and New button
-old_box = """            Box {
-                IconButton(onClick = { showMenu = true }) {"""
-
-new_box = """            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = if (showHistoryView) AnuPrimary else AnuLavenderBg,
-                    modifier = Modifier.clickable { showChatHistoryDialog = true }
-                ) {
-                    Row(Modifier.padding(horizontal = 9.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.History, contentDescription = null, tint = if (showHistoryView) Color.White else AnuPrimary, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(3.dp))
-                        Text("History", color = if (showHistoryView) Color.White else AnuPrimary, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-                Spacer(Modifier.width(6.dp))
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = AnuLavenderBg,
-                    modifier = Modifier.clickable {
-                        onNewConversation()
-                        showHistoryView = false
-                    }
-                ) {
-                    Row(Modifier.padding(horizontal = 9.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Add, contentDescription = null, tint = AnuPrimary, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(2.dp))
-                        Text("New", color = AnuPrimary, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-                Spacer(Modifier.width(2.dp))
-                Box {
-                IconButton(onClick = { showMenu = true }) {"""
-
-old_close = """            }
-        }
-
-        // Chat Message List or Empty Placeholder"""
-
-new_close = """                }
-            }
-        }
-
-        // Chat Message List or Empty Placeholder"""
-
-if old_box in s and "showHistoryView" not in s:
-    s = s.replace(old_box, new_box, 1)
-    s = s.replace(old_close, new_close, 1)
-
-# History Dialog: update signature and provide clean, soft, beautiful Saved conversations list
-if "conversations: List<AnuConversationSummary>" not in s:
-    s = s.replace(
-        """fun AnuChatHistoryDialog(
-    messages: List<ChatMessage>,
-    onDismiss: () -> Unit,
-    onClear: () -> Unit
-) {""",
-        """fun AnuChatHistoryDialog(
-    messages: List<ChatMessage>,
-    conversations: List<AnuConversationSummary>,
-    onSelectConversation: (String) -> Unit,
-    onNewConversation: () -> Unit,
-    onDismiss: () -> Unit,
-    onClear: () -> Unit
-) {""", 1
-    )
-
-if "conversations = state.chatConversations" not in s:
-    old_dialog_call = """        AnuChatHistoryDialog(
+    # Wire chat dialog callbacks
+    if "conversations = state.chatConversations" not in s:
+        old_dialog_call = """        AnuChatHistoryDialog(
             messages = state.chatMessages,
             onDismiss = { showChatHistoryDialog = false },
             onClear = onClearChat
         )"""
-    new_dialog_call = """        AnuChatHistoryDialog(
+        new_dialog_call = """        AnuChatHistoryDialog(
             messages = state.chatMessages,
             conversations = state.chatConversations,
             onSelectConversation = { id -> onSelectConversation(id); showChatHistoryDialog = false },
@@ -688,75 +583,33 @@ if "conversations = state.chatConversations" not in s:
                 showChatHistoryDialog = false
             }
         )"""
-    if old_dialog_call in s:
-        s = s.replace(old_dialog_call, new_dialog_call, 1)
+        if old_dialog_call in s:
+            s = s.replace(old_dialog_call, new_dialog_call, 1)
 
-if "val filteredConversations =" not in s:
-    s = s.replace(
-        """    val filteredMessages = remember(messages, searchQuery) {
-        if (searchQuery.isBlank()) messages
-        else messages.filter { it.text.contains(searchQuery, ignoreCase = true) }
-    }""",
-        """    val filteredMessages = remember(messages, searchQuery) {
-        if (searchQuery.isBlank()) messages
-        else messages.filter { it.text.contains(searchQuery, ignoreCase = true) }
-    }
-    val filteredConversations = remember(conversations, searchQuery) {
-        if (searchQuery.isBlank()) conversations
-        else conversations.filter { it.title.contains(searchQuery, ignoreCase = true) }
-    }""", 1
-    )
+    # Wire AnuChatScreen params in Home/Nav host
+    if "onNewConversation = {" not in s:
+        s = s.replace(
+            """                            onSendMessage = { text -> viewModel.sendText(text) },
+                            onVoiceClick = {""",
+            """                            onSendMessage = { text -> viewModel.sendText(text) },
+                            onNewConversation = { ZoyaSessionManager.newConversation() },
+                            onSelectConversation = { id -> ZoyaSessionManager.selectConversation(id) },
+                            onVoiceClick = {""", 1
+        )
 
-if "Saved conversations" not in s:
-    dialog_conv_list = '''                    Text("Saved conversations", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AnuTextMuted)
-                    Spacer(Modifier.height(6.dp))
-                    if (filteredConversations.isNotEmpty()) {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxWidth().heightIn(max = 150.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            items(filteredConversations, key = { it.id }) { conversation ->
-                                Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = if (conversation.id == activeConversationId) AnuLavenderBg else AnuBackground,
-                                    border = BorderStroke(1.dp, if (conversation.id == activeConversationId) AnuPrimary.copy(alpha = 0.45f) else AnuBorder),
-                                    modifier = Modifier.fillMaxWidth().clickable { onSelectConversation(conversation.id) }
-                                ) {
-                                    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Outlined.ChatBubbleOutline, null, tint = AnuPrimary, modifier = Modifier.size(16.dp))
-                                        Spacer(Modifier.width(8.dp))
-                                        Column(Modifier.weight(1f)) {
-                                            Text(conversation.title, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = AnuTextDark, maxLines = 1)
-                                            Text("${conversation.messageCount} messages", fontSize = 9.5.sp, color = AnuTextMuted, maxLines = 1)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        Text("No saved conversations yet.", fontSize = 11.5.sp, color = AnuTextMuted)
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = onNewConversation) {
-                            Icon(Icons.Outlined.Add, null, modifier = Modifier.size(16.dp), tint = AnuPrimary)
-                            Spacer(Modifier.width(4.dp))
-                            Text("New conversation", color = AnuPrimary, fontSize = 11.5.sp)
-                        }
-                    }
-                    Text("Messages in current conversation", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AnuTextMuted)
-                    Spacer(Modifier.height(6.dp))
-'''
-    s = s.replace(
-        """                    Spacer(Modifier.height(10.dp))
+    if "onNewConversation: () -> Unit" not in s:
+        s = s.replace(
+            """fun AnuChatScreen(
+    messages: List<ChatMessage>,
+    onSendMessage: (String) -> Unit,""",
+            """fun AnuChatScreen(
+    messages: List<ChatMessage>,
+    onSendMessage: (String) -> Unit,
+    onNewConversation: () -> Unit = {},
+    onSelectConversation: (String) -> Unit = {},""", 1
+        )
 
-                    if (filteredMessages.isEmpty()) {""",
-        """                    Spacer(Modifier.height(10.dp))
+    p_main.write_text(s, encoding="utf-8")
+    print("MainActivity.kt updated with dynamic greeting, tone cleanup, and conversation integration")
 
-""" + dialog_conv_list + """                    if (filteredMessages.isEmpty()) {""", 1
-    )
-
-p_main.write_text(s, encoding="utf-8")
-print("MainActivity updated with clean, soft, minimized chat & history section")
-
-print("All conversation history and functional repairs applied cleanly.")
+print("apply_conversation_history.py finished successfully!")
