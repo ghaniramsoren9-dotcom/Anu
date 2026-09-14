@@ -1,1 +1,1 @@
-ci: capture assembleDebug error log
+ci: trigger clean build after PhoneControlManager deduplication and MainActivity repair
