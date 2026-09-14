@@ -3,6 +3,9 @@ name: Repair Kotlin source escapes
 on:
   push:
     branches: [ main ]
+    paths:
+      - 'app/src/main/java/**/*.kt'
+      - '.github/workflows/repair-kotlin-escapes.yml'
   workflow_dispatch:
 
 permissions:
@@ -26,15 +29,14 @@ jobs:
           root = Path("app/src/main/java")
           valid = set("btnr'\"$\\")
           changed = 0
-          replacements = 0
+          replacements = [0]
 
-          # Match Kotlin ordinary string literals. A single backslash before
-          # an unsupported escape (for example \d, \w, \s or \() must be
-          # doubled so the intended regex escape reaches java.util.regex.
+          # Match Kotlin ordinary string literals. Unsupported escapes such as
+          # \d, \w, \s and \( are doubled so the intended regex escape reaches
+          # java.util.regex without being rejected by the Kotlin compiler.
           string_re = re.compile(r'"(?:\\.|[^"\\])*"')
 
           def repair_string(match):
-              nonlocal replacements
               s = match.group(0)
               out = []
               i = 0
@@ -46,7 +48,7 @@ jobs:
                           i += 2
                           continue
                       out.extend(('\\', '\\', nxt))
-                      replacements += 1
+                      replacements[0] += 1
                       i += 2
                       continue
                   out.append(s[i])
@@ -60,7 +62,7 @@ jobs:
                   path.write_text(fixed, encoding="utf-8")
                   changed += 1
 
-          print(f"Repaired {replacements} invalid Kotlin string escape(s) in {changed} file(s).")
+          print(f"Repaired {replacements[0]} invalid Kotlin string escape(s) in {changed} file(s).")
           PY
 
       - name: Verify no invalid Kotlin escapes remain
