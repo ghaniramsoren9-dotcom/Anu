@@ -47,14 +47,22 @@ jobs:
           set -euo pipefail
           echo "sdk.dir=/usr/local/lib/android/sdk" > local.properties
           echo "GEMINI_API_KEY=$GEMINI_API_KEY" >> local.properties
-      - name: Normalize source before build
+      - name: Validate source before build
         shell: bash
         run: |
           set -euo pipefail
-          python3 tools/fix_core_functionality.py
-          test -s app/src/main/java/com/ghaniram/zoya/MainActivity.kt
-          grep -q 'class MainActivity : ComponentActivity()' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
-          ! grep -q '\.focusable()' app/src/main/java/com/ghaniram/zoya/MainActivity.kt
+          MAIN="app/src/main/java/com/ghaniram/zoya/MainActivity.kt"
+          test -s "$MAIN"
+          grep -q 'class MainActivity : ComponentActivity()' "$MAIN"
+          # The current Compose version does not expose Modifier.focusable() here.
+          # Remove only that incompatible modifier; do not run source-rewriting repair scripts.
+          sed -i 's/\.focusable()//g' "$MAIN"
+          ! grep -q '\.focusable()' "$MAIN"
+          # Guard against the duplicate greeting declarations that previously broke compilation.
+          test "$(grep -c 'val context = LocalContext.current' "$MAIN")" -eq 3
+          test "$(grep -c 'val settingsStore = remember { AnuSettingsStore.getInstance(context) }' "$MAIN")" -eq 1
+          test "$(grep -c 'val userName = settingsStore.userName.trim().ifBlank { \"Ghaniram\" }' "$MAIN")" -eq 1
+          test "$(grep -c 'var currentHour by remember { mutableIntStateOf' "$MAIN")" -eq 1
       - name: Build debug APK
         shell: bash
         run: |
