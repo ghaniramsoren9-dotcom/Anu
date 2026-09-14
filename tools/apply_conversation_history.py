@@ -63,14 +63,15 @@ if p_acc.exists():
         p_acc.write_text(s, encoding="utf-8")
         print("AccessibilityControlService updated with scroll gesture fallback")
 
-# 3. PhoneControlManager.kt: goHome, enhanced scroll, and multilingual app launcher
+# 3. PhoneControlManager.kt: preserve rich implementation if already present
 p_phone = PKG / "PhoneControlManager.kt"
 if p_phone.exists():
     s = p_phone.read_text(encoding="utf-8")
-    s = re.sub(r'^\+\s*', '    ', s, flags=re.MULTILINE)
-
-    if "fun goHome(): String" not in s:
-        go_home_code = """    fun goHome(): String {
+    if "fun writeNote" in s and "fun goHome" in s:
+        print("PhoneControlManager already up-to-date with writeNote and goHome, skipping overwrite")
+    else:
+        if "fun goHome(): String" not in s:
+            go_home_code = '''    fun goHome(): String {
         return try {
             val intent = Intent(Intent.ACTION_MAIN).apply {
                 addCategory(Intent.CATEGORY_HOME)
@@ -85,155 +86,10 @@ if p_phone.exists():
         }
     }
 
-"""
-        s = re.sub(r'(fun accessibilityAction\(action: String)', go_home_code + r'\1', s, count=1)
-
-    new_acc_action = """fun accessibilityAction(action: String, text: String = "", value: String = ""): String {
-        val normalized = normalizeAction(action)
-        if (normalized == "call" || normalized == "callcontact" || normalized == "callbyname" || normalized == "directcall") return deviceActions.directCall(text)
-        if (normalized in listOf("home", "gohome", "homescreen", "openhome")) return goHome()
-        val service = AccessibilityControlService.instance
-        if (service == null) {
-            return if (normalized in listOf("home", "gohome", "homescreen")) goHome()
-            else "Anu phone-control accessibility is not enabled. Open Accessibility settings and enable Anu."
-        }
-        val textToType = if (value.isNotBlank()) value else text
-        val ok = when (normalized) {
-            "home", "gohome", "back", "goback", "recents", "recentapps", "openrecentapps", "notifications", "opennotifications", "quicksettings", "openquicksettings", "power", "powerdialog", "lock", "lockscreen" -> service.globalAction(action)
-            "click", "clicktext" -> service.clickByText(text)
-            "longclick", "longclicktext" -> service.clickByText(text, longClick = true)
-            "settext", "settextbytext" -> service.setTextByText(text, if (value.isNotBlank()) value else text)
-            "typetext", "type", "write", "writetext", "paste", "pastetext", "entertext", "typenote", "typecode", "input", "insert" -> {
-                val textToType = if (value.isNotBlank()) value else text
-                service.typeText(textToType)
-            }
-            "scroll", "scrollforward", "scrolldown", "down", "swipedown", "swipeup" -> service.scroll(true)
-            "scrollbackward", "scrollup", "up" -> service.scroll(false)
-            else -> false
-        }
-        val suffix = if (text.isNotBlank() && normalized !in listOf("typetext", "type", "write", "writetext", "paste", "pastetext", "settext", "settextbytext")) " on $text" else ""
-        return if (ok) "completed $action" else "could not complete $action$suffix"
-    }
-
-    fun writeNote(title: String, content: String, appName: String = "keep"): String {
-        val fullText = if (title.isNotBlank()) "$title\n\n$content" else content
-        try {
-            val clipboard = app.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
-            clipboard?.setPrimaryClip(android.content.ClipData.newPlainText(title.ifBlank { "Note" }, fullText))
-        } catch (_: Exception) {}
-
-        val service = AccessibilityControlService.instance
-        if (service != null) {
-            val typed = service.typeText(fullText)
-            if (typed) return "Note typed into active editor (${fullText.length} characters)"
-        }
-
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, title)
-            putExtra(Intent.EXTRA_TEXT, fullText)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        return try {
-            app.startActivity(Intent.createChooser(intent, "Save Note with Anu").apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
-            "Note copied to clipboard and sharing opened: '$title' (${fullText.length} characters)"
-        } catch (_: Exception) {
-            "Note copied to clipboard (${fullText.length} characters): '$title'"
-        }
-    }
-
-    fun writeCode(code: String, filename: String = "", language: String = ""): String {
-        val cleanCode = code.trim()
-        if (cleanCode.isEmpty()) return "Code content is empty"
-
-        try {
-            val clipboard = app.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
-            clipboard?.setPrimaryClip(android.content.ClipData.newPlainText(filename.ifBlank { "Code" }, cleanCode))
-        } catch (_: Exception) {}
-
-        val service = AccessibilityControlService.instance
-        if (service != null) {
-            val pasted = service.typeText(cleanCode)
-            if (pasted) return "Code written into active editor (${cleanCode.length} characters)"
-        }
-        return "Complete code generated and copied to clipboard (${cleanCode.length} characters)"
-    }
-
-    fun githubAction(action: String, repo: String = "", path: String = "", content: String = "", message: String = ""): String {
-        val store = AnuSettingsStore.getInstance(app)
-        val token = store.githubToken
-        if (token.isBlank()) {
-            return "GitHub is not connected yet. Please connect your GitHub account in Anu Settings > Connectors."
-        }
-        val targetRepo = if (repo.isNotBlank()) repo else store.githubDefaultRepo
-        return GitHubConnectorClient.executeAction(token, action, targetRepo, path, content, message)
-    }
-
-    fun openAccessibilitySettings"""
-    s = re.sub(r'fun accessibilityAction\(action: String.*?\n\s*fun openAccessibilitySettings', new_acc_action, s, count=1, flags=re.DOTALL)
-
-    new_open_app = """fun openApp(appName: String): String {
-        if (appName.isBlank()) return "app name is missing"
-        val clean = appName.trim().lowercase()
-            .replace(Regex("^(open|launch|start|run|ଖୋଲ|khola|kholo)[ \\t]+"), "")
-            .replace(Regex("[ \\t]+(open|kholo|khola|ଖୋଲ|app)$"), "")
-            .trim()
-        val target = if (clean.isNotBlank()) clean else appName.trim().lowercase()
-        val pm = app.packageManager
-        when (target) {
-            "camera", "କ୍ୟାମେରା", "कैमरा" -> return openCamera()
-            "settings", "setting", "ସେଟିଙ୍ଗ୍", "ସେଟିଂ", "सेटिंग्स" -> return openSettings()
-            "phone", "dialer", "ଫୋନ୍", "କଲ୍", "फोन" -> return openPhone()
-            "messages", "sms", "ମେସେଜ୍", "मैसेज" -> return openMessages()
-            "wifi", "wifi settings" -> return openWifiSettings()
-            "bluetooth", "bluetooth settings" -> return openBluetoothSettings()
-            "sound", "sound settings" -> return openSoundSettings()
-            "display", "display settings" -> return openDisplaySettings()
-        }
-        val knownPackages = mapOf(
-            "youtube" to "com.google.android.youtube", "yt" to "com.google.android.youtube", "ୟୁଟ୍ୟୁବ୍" to "com.google.android.youtube", "ୟୁଟ୍ୟୁବ" to "com.google.android.youtube", "यूट्यूब" to "com.google.android.youtube",
-            "whatsapp" to "com.whatsapp", "wa" to "com.whatsapp", "ହ୍ଵାଟ୍ସଆପ୍" to "com.whatsapp", "ହ୍ୱାଟ୍ସଆପ" to "com.whatsapp", "व्हाट्सएप" to "com.whatsapp",
-            "instagram" to "com.instagram.android", "insta" to "com.instagram.android", "ଇନଷ୍ଟାଗ୍ରାମ୍" to "com.instagram.android", "इंस्टाग्राम" to "com.instagram.android",
-            "facebook" to "com.facebook.katana", "fb" to "com.facebook.katana", "ଫେସବୁକ୍" to "com.facebook.katana", "फेसबुक" to "com.facebook.katana",
-            "messenger" to "com.facebook.orca",
-            "chrome" to "com.android.chrome", "browser" to "com.android.chrome", "କ୍ରୋମ୍" to "com.android.chrome", "କ୍ରୋମ" to "com.android.chrome", "क्रोम" to "com.android.chrome",
-            "gmail" to "com.google.android.gm", "email" to "com.google.android.gm", "ମେଲ୍" to "com.google.android.gm",
-            "maps" to "com.google.android.apps.maps", "googlemaps" to "com.google.android.apps.maps", "ମ୍ୟାପ୍" to "com.google.android.apps.maps",
-            "photos" to "com.google.android.apps.photos", "gallery" to "com.google.android.apps.photos", "ଫଟୋ" to "com.google.android.apps.photos", "ଗ୍ୟାଲେରି" to "com.google.android.apps.photos",
-            "spotify" to "com.spotify.music",
-            "telegram" to "org.telegram.messenger", "ଟେଲିଗ୍ରାମ୍" to "org.telegram.messenger",
-            "snapchat" to "com.snapchat.android",
-            "netflix" to "com.netflix.mediaclient",
-            "playstore" to "com.android.vending", "store" to "com.android.vending",
-            "clock" to "com.google.android.deskclock", "calculator" to "com.google.android.calculator"
-        )
-        val knownPkg = knownPackages[target] ?: knownPackages[normalize(target)]
-        if (knownPkg != null && launchPackage(pm, knownPkg)) return "opened $appName"
-        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val matches = try { pm.queryIntentActivities(launcherIntent, PackageManager.MATCH_ALL) } catch (_: Exception) { emptyList() }
-        val exact = matches.firstOrNull { normalize(it.loadLabel(pm).toString()) == normalize(target) }
-        val fuzzy = exact ?: matches.firstOrNull { info -> val lbl = normalize(info.loadLabel(pm).toString()); lbl.contains(normalize(target)) || normalize(target).contains(lbl) }
-        if (fuzzy != null) {
-            val launch = pm.getLaunchIntentForPackage(fuzzy.activityInfo.packageName)
-            if (launch != null) {
-                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
-                app.startActivity(launch)
-                return "opened ${fuzzy.loadLabel(pm)}"
-            }
-        }
-        if (target.contains("youtube") || target.contains("ୟୁଟ୍ୟୁବ")) {
-            return try { app.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "opened YouTube" } catch (_: Exception) { "could not open YouTube" }
-        }
-        if (target.contains("whatsapp") || target.contains("ହ୍ଵାଟ୍ସ")) {
-            return try { app.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("whatsapp://send")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "opened WhatsApp" } catch (_: Exception) { "could not open WhatsApp" }
-        }
-        return "could not find or open app: $appName"
-    }
-    private fun launchPackage"""
-    s = re.sub(r'fun openApp\(appName: String\): String\s*\{.*?\n\s*private fun launchPackage', new_open_app, s, count=1, flags=re.DOTALL)
-
-    p_phone.write_text(s, encoding="utf-8")
-    print("PhoneControlManager updated with goHome, openApp, and accessibilityAction")
+'''
+            s = s.replace("fun accessibilityAction(action: String", go_home_code + "fun accessibilityAction(action: String", 1)
+        p_phone.write_text(s, encoding="utf-8")
+        print("PhoneControlManager updated")
 
 # 4. GeminiLiveClient.kt: fix sendText to use clientContent
 p_live = PKG / "GeminiLiveClient.kt"
@@ -585,7 +441,10 @@ new_init = '''        val persisted = runBlocking(Dispatchers.IO) { repository.g
         } } }'''
 old_init = '''        _state.value = ZoyaUiState(language = language, quote = idleQuotes[language]?.random().orEmpty(), tasks = loadTasks())
         scope.launch { runCatching { repository.allMemoriesFlow.collect { memories -> _state.update { it.copy(memories = memories) } } } }
-        scope.launch { runCatching { repository.allChatMessagesFlow.collect { messages -> _state.update { it.copy(chatMessages = messages) } } } }'''
+        scope.launch { runCatching { repository.allChatMessagesFlow.collect { messages ->
+            val id = prefs.getString(ACTIVE_CONVERSATION_PREF, activeId) ?: activeId
+            _state.update { it.copy(chatMessages = messagesForConversation(messages, id), chatConversations = conversationSummaries(messages), activeConversationId = id) }
+        } } }'''
 if old_init in s:
     s = s.replace(old_init, new_init, 1)
 
@@ -932,3 +791,4 @@ if "Saved conversations" not in s:
 
 p_main.write_text(s, encoding="utf-8")
 print("MainActivity updated with clean, soft, minimized chat & history section")
+print("All conversation history and functional repairs applied cleanly.")
