@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
 object GitHubConnectorClient {
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.MILLISECONDS)
         .build()
 
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
@@ -99,6 +99,7 @@ object GitHubConnectorClient {
     fun createOrUpdateFile(token: String, repo: String, path: String, content: String, message: String): String = try {
         val cleanRepo = repo.trim().removePrefix("https://github.com/").removeSuffix(".git")
         val cleanPath = path.trim().removePrefix("/")
+        if (cleanRepo.isBlank() || cleanPath.isBlank()) return "GitHub write failed: repository and file path are required"
 
         val getReq = Request.Builder()
             .url("https://api.github.com/repos/$cleanRepo/contents/$cleanPath")
@@ -133,20 +134,48 @@ object GitHubConnectorClient {
             if (res.isSuccessful) {
                 "Successfully committed $cleanPath to $cleanRepo"
             } else {
-                "Commit failed: HTTP ${res.code}"
+                val body = res.body?.string().orEmpty()
+                "Commit failed: HTTP ${res.code}${if (body.isNotBlank()) " $body" else ""}"
             }
         }
     } catch (e: Exception) {
         "Failed to write file to GitHub: ${e.message ?: "unknown error"}"
     }
 
-    fun executeAction(token: String, action: String, repo: String, path: String, content: String, message: String): String = when (action) {
+    fun executeAction(token: String, action: String, repo: String, path: String, content: String, message: String): String = when (action.lowercase().trim()) {
+        "test", "test_connection", "connect", "connection" -> testConnection(token).second
         "list_repos", "list", "repos", "get_repos" -> listRepos(token)
         "create_repo", "createrepo", "new_repo" -> createRepo(token, repo)
-        "commit", "commit_file", "create_file", "write_file", "push_file", "save_file" -> {
+        "read", "read_file", "get_file", "file" -> {
+            if (repo.isBlank() || path.isBlank()) "Please specify repository (e.g. username/repo) and file path"
+            else readFile(token, repo, path)
+        }
+        "commit", "commit_file", "create_file", "write_file", "write", "create", "update", "update_file", "push_file", "save_file" -> {
             if (repo.isBlank() || path.isBlank()) "Please specify repository (e.g. username/repo) and file path"
             else createOrUpdateFile(token, repo, path, content, message)
         }
-        else -> listRepos(token)
+        else -> "Unsupported GitHub action '$action'. Supported actions: test, list_repos, read, write, create, update, commit."
+    }
+
+    private fun readFile(token: String, repo: String, path: String): String = try {
+        val cleanRepo = repo.trim().removePrefix("https://github.com/").removeSuffix(".git")
+        val cleanPath = path.trim().removePrefix("/")
+        val request = Request.Builder()
+            .url("https://api.github.com/repos/$cleanRepo/contents/$cleanPath")
+            .header("Authorization", "Bearer ${token.trim()}")
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "Anu-Assistant-Android")
+            .build()
+        client.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) return "GitHub read failed: HTTP ${response.code}"
+            val json = JSONObject(body)
+            val encoded = json.optString("content").replace("\n", "")
+            if (encoded.isBlank()) return "GitHub file '$cleanPath' was found but contains no inline text content."
+            val decoded = String(Base64.decode(encoded, Base64.DEFAULT), Charsets.UTF_8)
+            "Successfully read $cleanPath from $cleanRepo:\n$decoded"
+        }
+    } catch (e: Exception) {
+        "Failed to read file from GitHub: ${e.message ?: "unknown error"}"
     }
 }
