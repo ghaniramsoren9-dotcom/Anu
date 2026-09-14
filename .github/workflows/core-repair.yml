@@ -1,0 +1,40 @@
+name: Repair Anu core functionality
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: ${{ !startsWith(github.event.head_commit.message, '[Anu repair]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Apply core functionality fixes
+        run: python3 tools/fix_core_functionality.py
+
+      - name: Commit repaired sources
+        run: |
+          set -e
+          git config user.name "Anu Repair Bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/ghaniram/zoya/MainActivity.kt \
+                  app/src/main/java/com/ghaniram/zoya/PhoneControlManager.kt \
+                  app/src/main/java/com/ghaniram/zoya/ZoyaSessionManager.kt
+          if git diff --cached --quiet; then
+            echo "No source changes required."
+            exit 0
+          fi
+          git commit -m "[Anu repair] Fix core input controls greeting history and personal context"
+          git push

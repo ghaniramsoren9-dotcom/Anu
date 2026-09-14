@@ -1,0 +1,104 @@
+name: Repair Kotlin source escapes
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'app/src/main/java/**/*.kt'
+      - '.github/workflows/repair-kotlin-escapes.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Repair invalid Kotlin string escapes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path("app/src/main/java")
+          valid = set("btnr'\"$\\")
+          changed = 0
+          replacements = [0]
+
+          # Match Kotlin ordinary string literals. Unsupported escapes such as
+          # \d, \w, \s and \( are doubled so the intended regex escape reaches
+          # java.util.regex without being rejected by the Kotlin compiler.
+          string_re = re.compile(r'"(?:\\.|[^"\\])*"')
+
+          def repair_string(match):
+              s = match.group(0)
+              out = []
+              i = 0
+              while i < len(s):
+                  if s[i] == '\\' and i + 1 < len(s):
+                      nxt = s[i + 1]
+                      if nxt in valid or nxt == 'u':
+                          out.extend((s[i], nxt))
+                          i += 2
+                          continue
+                      out.extend(('\\', '\\', nxt))
+                      replacements[0] += 1
+                      i += 2
+                      continue
+                  out.append(s[i])
+                  i += 1
+              return ''.join(out)
+
+          for path in root.rglob("*.kt"):
+              text = path.read_text(encoding="utf-8")
+              fixed = string_re.sub(repair_string, text)
+              if fixed != text:
+                  path.write_text(fixed, encoding="utf-8")
+                  changed += 1
+
+          print(f"Repaired {replacements[0]} invalid Kotlin string escape(s) in {changed} file(s).")
+          PY
+
+      - name: Verify no invalid Kotlin escapes remain
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          string_re = re.compile(r'"(?:\\.|[^"\\])*"')
+          invalid = re.compile(r"(?<!\\)\\(?![btnr'\"$\\u])")
+          bad = []
+          for path in Path("app/src/main/java").rglob("*.kt"):
+              text = path.read_text(encoding="utf-8")
+              for match in string_re.finditer(text):
+                  if invalid.search(match.group(0)):
+                      bad.append(str(path))
+                      break
+          if bad:
+              print("Invalid Kotlin string escapes remain:")
+              print("\n".join(bad))
+              raise SystemExit(1)
+          print("Kotlin escape verification passed.")
+          PY
+
+      - name: Commit repair if needed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No Kotlin escape repair needed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java
+          git commit -m "fix: normalize invalid Kotlin string escapes"
+          git push
