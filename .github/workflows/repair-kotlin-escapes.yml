@@ -71,9 +71,8 @@ jobs:
           from pathlib import Path
           import re
 
-          valid = set("btnr'\"$\\")
           string_re = re.compile(r'"(?:\\.|[^"\\])*"')
-          invalid = re.compile(r'(?<!\\)\\(?![btnr'"$\\u])')
+          invalid = re.compile(r"(?<!\\)\\(?![btnr'\"$\\u])")
           bad = []
           for path in Path("app/src/main/java").rglob("*.kt"):
               text = path.read_text(encoding="utf-8")
