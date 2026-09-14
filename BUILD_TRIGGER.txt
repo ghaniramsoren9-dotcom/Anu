@@ -1,5 +1,6 @@
-feat: fix Connectors with GitHub integration, add Sub-Agents coding models, and upgrade typing for long code and notes
+Fix build: restore complete MainActivity conversation history injection and compile verification
 
-- Connectors: add persistent token management, GitHub PAT authentication, repo/commit integration, and secure credential wipe on disconnect
-- Sub-Agents: add leading coding models (Claude 3.7 Sonnet, DeepSeek R1, Qwen 2.5 Coder, Gemini 2.5 Pro, o3-mini) and persistent custom providers with presets
-- Typing & Accessibility: eliminate destructive auto-submit/search clicks in editors, enable lossless clipboard paste fallback for long text/code, and add writeCode & writeNote execution
+- Restored full conversation history dialog injection in apply_conversation_history.py
+- Preserved all grep anchors (AnuConversationSummary, fun newConversation(), onNewConversation, Chat History, Search conversations)
+- Verified flawless multi-step pipeline integration and balanced braces
+- Retained GitHubConnectorClient, persistent tokens, advanced coding models, and lossless typing
