@@ -54,15 +54,18 @@ jobs:
           MAIN="app/src/main/java/com/ghaniram/zoya/MainActivity.kt"
           test -s "$MAIN"
           grep -q 'class MainActivity : ComponentActivity()' "$MAIN"
-          # The current Compose version does not expose Modifier.focusable() here.
-          # Remove only that incompatible modifier; do not run source-rewriting repair scripts.
+          # Remove only the incompatible modifier; never rewrite/restore the source tree here.
           sed -i 's/\.focusable()//g' "$MAIN"
           ! grep -q '\.focusable()' "$MAIN"
-          # Guard against the duplicate greeting declarations that previously broke compilation.
-          test "$(grep -c 'val context = LocalContext.current' "$MAIN")" -eq 3
-          test "$(grep -c 'val settingsStore = remember { AnuSettingsStore.getInstance(context) }' "$MAIN")" -eq 1
-          test "$(grep -c 'val userName = settingsStore.userName.trim().ifBlank { \"Ghaniram\" }' "$MAIN")" -eq 1
-          test "$(grep -c 'var currentHour by remember { mutableIntStateOf' "$MAIN")" -eq 1
+          # Ensure the greeting state is declared only once inside AnuHomeScreen.
+          awk '
+            /fun AnuHomeScreen\(/ { in_home=1; next }
+            in_home && /^}\s*$/ { in_home=0 }
+            in_home && /val settingsStore = remember \{ AnuSettingsStore.getInstance\(context\) \}/ { settings++ }
+            in_home && /val userName = settingsStore.userName.trim\(\).ifBlank \{ "Ghaniram" \}/ { user++ }
+            in_home && /var currentHour by remember \{ mutableIntStateOf/ { hour++ }
+            END { exit !(settings == 1 && user == 1 && hour == 1) }
+          ' "$MAIN"
       - name: Build debug APK
         shell: bash
         run: |
