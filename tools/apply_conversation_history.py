@@ -134,7 +134,7 @@ if "CONVERSATION_MARKER" not in s:
 """, 1)
 
 if "private fun splitConversations(" not in s:
-    helper = """    private fun conversationMarker(id: String) = ChatMessage(UUID.randomUUID().toString(), ChatRole.SYSTEM, "$CONVERSATION_MARKER|$id", System.currentTimeMillis())
+    helper = r"""    private fun conversationMarker(id: String) = ChatMessage(UUID.randomUUID().toString(), ChatRole.SYSTEM, "$CONVERSATION_MARKER|$id", System.currentTimeMillis())
 
     private fun parseConversationId(message: ChatMessage): String? {
         if (message.role != ChatRole.SYSTEM || !message.text.startsWith("$CONVERSATION_MARKER|")) return null
