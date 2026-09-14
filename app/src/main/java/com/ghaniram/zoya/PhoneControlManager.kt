@@ -67,6 +67,9 @@ class PhoneControlManager(private val app: Application) {
             "volumeup", "volume_up", "raisevolume", "soundup", "volumeincrease" -> { volumeUp(); true }
             "volumedown", "volume_down", "lowervolume", "sounddown", "volumedecrease" -> { volumeDown(); true }
             "mute", "mutevolume", "togglemute" -> { muteVolume(); true }
+            "volumeup", "volume_up", "raisevolume", "soundup", "volumeincrease" -> { volumeUp(); true }
+            "volumedown", "volume_down", "lowervolume", "sounddown", "volumedecrease" -> { volumeDown(); true }
+            "mute", "mutevolume", "togglemute" -> { muteVolume(); true }
             "click", "clicktext" -> service.clickByText(text)
             "longclick", "longclicktext" -> service.clickByText(text, longClick = true)
             "settext", "settextbytext" -> service.setTextByText(text, textToType)
